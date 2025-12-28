@@ -32,9 +32,17 @@ export function useUploadExpenses(statementIds: string[]) {
   // Create a stable key for the subscription
   const subscriptionKey = useMemo(() => statementIds.join(","), [statementIds]);
 
+  useEffect(() => {
+    if (statementIds.length === 0) {
+      setExpenses([]);
+    }
+  }, [statementIds]);
+
   // Set up realtime subscription for specific statement IDs
   useEffect(() => {
     if (!subscriptionKey || statementIds.length === 0) return;
+
+    setExpenses([]);
 
     // First, fetch any existing expenses for these statement IDs
     const fetchExistingExpenses = async () => {

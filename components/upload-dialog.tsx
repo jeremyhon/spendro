@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   FileIcon,
+  Loader2,
   UploadCloud,
   X,
 } from "lucide-react";
@@ -51,6 +52,12 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
   );
   const [isUploadPanelCollapsed, setIsUploadPanelCollapsed] = useState(false);
   const { toast } = useToast();
+  const resetDialogState = useCallback(() => {
+    setUploads([]);
+    setSelectedExpense(null);
+    setRecentlyEditedIds(new Set());
+    setIsUploadPanelCollapsed(false);
+  }, []);
 
   // Memoize statement IDs to prevent recreation on every render
   const statementIds = useMemo(() => {
@@ -91,12 +98,9 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
   // Clear state when dialog closes
   useEffect(() => {
     if (!isOpen) {
-      setUploads([]);
-      setSelectedExpense(null);
-      setRecentlyEditedIds(new Set());
-      setIsUploadPanelCollapsed(false);
+      resetDialogState();
     }
-  }, [isOpen]);
+  }, [isOpen, resetDialogState]);
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -301,7 +305,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
   if (uploadState === "upload") {
     return (
       <Dialog open={isOpen} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-120">
           <DialogHeader>
             <DialogTitle>{getDialogTitle()}</DialogTitle>
             <DialogDescription>{getDialogDescription()}</DialogDescription>
@@ -333,6 +337,9 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
                   upload.status === "uploading" ||
                   (upload.status === "success" &&
                     electricStatus?.status === "processing");
+                const isProcessing =
+                  upload.status === "success" &&
+                  electricStatus?.status === "processing";
 
                 return (
                   <div
@@ -340,9 +347,12 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
                     className="flex items-center gap-4"
                   >
                     <FileIcon className="h-8 w-8 text-muted-foreground" />
-                    <div className="flex-1">
-                      <p className="text-sm font-medium truncate">
-                        {upload.file.name}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium flex items-center gap-2 min-w-0">
+                        <span className="truncate">{upload.file.name}</span>
+                        {isProcessing && (
+                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                        )}
                       </p>
                       {showProgress ? (
                         <div className="space-y-1">
@@ -408,8 +418,8 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
   // Show expanded dialog for processing and review states
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-7xl h-[90vh] max-h-[900px] flex flex-col">
-        <DialogHeader className="flex-shrink-0">
+      <DialogContent className="max-w-7xl h-[90vh] max-h-225 flex flex-col">
+        <DialogHeader className="shrink-0">
           <DialogTitle>{getDialogTitle()}</DialogTitle>
           <DialogDescription>{getDialogDescription()}</DialogDescription>
         </DialogHeader>
@@ -417,8 +427,8 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
         <div className="flex gap-4 flex-1 min-h-0 overflow-hidden">
           {/* Left Panel - File Upload (Collapsible) */}
           {!isUploadPanelCollapsed && (
-            <div className="w-[300px] lg:w-[320px] flex-shrink-0 flex flex-col min-h-0">
-              <div className="flex items-center justify-between mb-4 flex-shrink-0">
+            <div className="w-75 lg:w-[320px] shrink-0 flex flex-col min-h-0">
+              <div className="flex items-center justify-between mb-4 shrink-0">
                 <h3 className="text-sm font-medium">Upload Files</h3>
                 {uploadState === "review" && (
                   <Button
@@ -434,7 +444,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
 
               <div
                 {...getRootProps()}
-                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors flex-shrink-0 ${
+                className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors shrink-0 ${
                   isDragActive
                     ? "border-primary bg-primary/10"
                     : "border-border hover:border-primary/50"
@@ -458,16 +468,22 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
                       upload.status === "uploading" ||
                       (upload.status === "success" &&
                         electricStatus?.status === "processing");
+                    const isProcessing =
+                      upload.status === "success" &&
+                      electricStatus?.status === "processing";
 
                     return (
                       <div
                         key={upload.file.name}
                         className="flex items-center gap-2"
                       >
-                        <FileIcon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        <FileIcon className="h-4 w-4 text-muted-foreground shrink-0" />
                         <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium truncate">
-                            {upload.file.name}
+                          <p className="text-xs font-medium flex items-center gap-1 min-w-0">
+                            <span className="truncate">{upload.file.name}</span>
+                            {isProcessing && (
+                              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                            )}
                           </p>
                           {showProgress ? (
                             <div className="space-y-1">
@@ -495,14 +511,14 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
                         </div>
                         {upload.status === "success" &&
                           electricStatus?.status === "completed" && (
-                            <CheckCircle2 className="h-3 w-3 text-green-500 flex-shrink-0" />
+                            <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
                           )}
                         {(upload.status === "pending" ||
                           upload.status === "error") && (
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-4 w-4 flex-shrink-0"
+                            className="h-4 w-4 shrink-0"
                             onClick={() => removeFile(upload.file.name)}
                           >
                             <X className="h-3 w-3" />
@@ -517,7 +533,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
               {uploads.some((u) => u.status === "pending") && (
                 <Button
                   onClick={startUploads}
-                  className="w-full text-xs h-8 mt-4 flex-shrink-0"
+                  className="w-full text-xs h-8 mt-4 shrink-0"
                 >
                   Start Upload
                 </Button>
@@ -527,7 +543,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
 
           {/* Collapsed Upload Panel Toggle */}
           {isUploadPanelCollapsed && uploadState === "review" && (
-            <div className="flex-shrink-0">
+            <div className="shrink-0">
               <Button
                 variant="outline"
                 size="sm"
@@ -553,7 +569,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
 
           {/* Right Panel - Expense Editor */}
           {selectedExpense && (
-            <div className="w-[320px] lg:w-[360px] flex-shrink-0 flex flex-col min-h-0">
+            <div className="w-[320px] lg:w-90 shrink-0 flex flex-col min-h-0">
               <div className="border-l pl-4 flex-1 min-h-0">
                 <UploadExpenseEditor
                   key={selectedExpense.id}
@@ -568,7 +584,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
           )}
         </div>
 
-        <div className="flex justify-between items-center pt-4 border-t flex-shrink-0">
+        <div className="flex justify-between items-center pt-4 border-t shrink-0">
           <div className="text-sm text-muted-foreground">
             {uploadState === "review" && expenseCount > 0 && (
               <span>
@@ -578,17 +594,16 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              {uploadState === "review" ? "Done" : "Cancel"}
+              {uploadState === "review" ? "Hide" : "Cancel"}
             </Button>
             {uploadState === "review" && (
               <Button
                 onClick={() => {
-                  // Reset for additional uploads
-                  setUploads([]);
-                  setSelectedExpense(null);
+                  resetDialogState();
+                  onOpenChange(false);
                 }}
               >
-                Upload More Files
+                Finish
               </Button>
             )}
           </div>
