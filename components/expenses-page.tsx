@@ -107,7 +107,6 @@ export function ExpensesPage() {
   const { expenses, loading, error } = useElectricExpenses({
     filters,
     autoSubscribe: true,
-    loadRecentOnly: true,
     monthsBack: 6,
   });
 
