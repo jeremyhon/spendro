@@ -81,7 +81,6 @@ export function useElectricExpenses(
   const [expenses, setExpenses] = useState<DisplayExpenseWithDuplicate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refreshToken, setRefreshToken] = useState(0);
 
   const dateRange = useMemo(() => {
     if (filters?.dateRange?.start && filters?.dateRange?.end) {
@@ -96,7 +95,12 @@ export function useElectricExpenses(
       start: start.toISOString().split("T")[0],
       end: end.toISOString().split("T")[0],
     };
-  }, [filters?.dateRange?.start, filters?.dateRange?.end, monthsBack]);
+  }, [
+    filters?.dateRange?.start,
+    filters?.dateRange?.end,
+    monthsBack,
+    filters?.dateRange,
+  ]);
 
   const shapeParams = useMemo(() => {
     const categories = filters?.categories?.length
@@ -119,6 +123,7 @@ export function useElectricExpenses(
     filters?.merchants,
     filters?.amountRange?.min,
     filters?.amountRange?.max,
+    filters?.amountRange,
   ]);
 
   const sortedExpenses = useMemo(() => {
@@ -206,7 +211,6 @@ export function useElectricExpenses(
 
     setError(null);
     setLoading(true);
-    setRefreshToken((token) => token + 1);
   }, [user?.id]);
 
   // Setup subscriptions on mount and auth changes
@@ -232,7 +236,7 @@ export function useElectricExpenses(
         unsubscribe();
       }
     };
-  }, [user?.id, authLoading, autoSubscribe, setupExpensesSync, refreshToken]);
+  }, [user?.id, authLoading, autoSubscribe, setupExpensesSync]);
 
   return {
     expenses: filteredExpenses,

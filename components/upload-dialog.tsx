@@ -147,7 +147,9 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
       setUploads((prev) => [...prev, ...newUploads]);
 
       // Auto-upload dropped files
-      acceptedFiles.forEach((file) => handleUpload(file));
+      acceptedFiles.forEach((file) => {
+        void handleUpload(file);
+      });
     },
     [handleUpload]
   );
@@ -164,7 +166,9 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
   const startUploads = () => {
     uploads
       .filter((u) => u.status === "pending")
-      .forEach((u) => handleUpload(u.file));
+      .forEach((u) => {
+        void handleUpload(u.file);
+      });
   };
 
   const handleSelectExpense = (expense: DisplayExpenseWithDuplicate) => {

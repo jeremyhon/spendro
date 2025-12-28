@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     // Collect all params[N] query parameters
     for (const [key, value] of url.searchParams.entries()) {
       if (key.startsWith("params[")) {
-        const index = Number.parseInt(key.slice(7, -1)); // Extract number from params[N]
+        const index = Number.parseInt(key.slice(7, -1), 10); // Extract number from params[N]
         params[index - 1] = value; // Electric SQL uses 1-based indexing, array uses 0-based
       } else if (key !== "where" && key !== "params") {
         // Copy other parameters (table, columns, offset, etc.)
