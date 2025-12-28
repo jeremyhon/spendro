@@ -33,3 +33,6 @@ next-env.d.ts
 
 # dev logs
 dev.log
+
+# editor
+.vscode

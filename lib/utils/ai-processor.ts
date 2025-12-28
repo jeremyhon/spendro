@@ -160,7 +160,7 @@ export async function* extractExpensesFromPdf(
             {
               type: "file",
               data: base64Pdf,
-              mimeType: "application/pdf",
+              mediaType: "application/pdf",
             },
           ],
         },

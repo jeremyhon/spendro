@@ -1,5 +1,6 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 
 interface ExpenseItem {
@@ -181,15 +182,14 @@ async function createBankStatementPdf(
 }
 
 // CLI usage
-if (require.main === module) {
+const isMain = fileURLToPath(import.meta.url) === process.argv[1];
+if (isMain) {
   (async () => {
     const pdfBuffer = await generateTestPdf();
     const fileName = `test-statement-${Date.now()}.pdf`;
     const filePath = join(process.cwd(), "temp", fileName);
 
     // Create temp directory if it doesn't exist
-    const { mkdirSync } = require("node:fs");
-    const { dirname } = require("node:path");
     mkdirSync(dirname(filePath), { recursive: true });
 
     writeFileSync(filePath, pdfBuffer);
