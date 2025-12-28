@@ -2,7 +2,8 @@
 
 import { format } from "date-fns";
 import { Calendar as CalendarIcon } from "lucide-react";
-import type { DateRange } from "react-day-picker";
+import { useEffect, useState } from "react";
+import type { DateRange, SelectRangeEventHandler } from "react-day-picker";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -34,9 +35,11 @@ export function DateRangePickerWithPresets({
   date?: DateRange;
   onDateChange?: (date: DateRange | undefined) => void;
 }) {
-  const handleDateChange = (newDate: DateRange | undefined) => {
-    onDateChange?.(newDate);
-  };
+  const [draftRange, setDraftRange] = useState<DateRange | undefined>(date);
+
+  useEffect(() => {
+    setDraftRange(date);
+  }, [date]);
 
   const presets = [
     {
@@ -57,6 +60,26 @@ export function DateRangePickerWithPresets({
     },
   ];
 
+  const applyRange = (newRange: DateRange | undefined) => {
+    setDraftRange(newRange);
+
+    if (newRange?.from && newRange?.to) {
+      onDateChange?.(newRange);
+    }
+  };
+
+  const handleCalendarSelect: SelectRangeEventHandler = (
+    newRange,
+    selectedDay
+  ) => {
+    if (draftRange?.from && draftRange?.to && selectedDay) {
+      setDraftRange({ from: selectedDay, to: undefined });
+      return;
+    }
+
+    applyRange(newRange);
+  };
+
   return (
     <div className={cn("grid gap-2", className)}>
       <Popover>
@@ -66,18 +89,18 @@ export function DateRangePickerWithPresets({
             variant="outline"
             className={cn(
               "w-[260px] justify-start text-left font-normal",
-              !date && "text-muted-foreground"
+              !draftRange && "text-muted-foreground"
             )}
           >
             <CalendarIcon className="mr-2 h-4 w-4" />
-            {date?.from ? (
-              date.to ? (
+            {draftRange?.from ? (
+              draftRange.to ? (
                 <>
-                  {format(date.from, "LLL dd, y")} -{" "}
-                  {format(date.to, "LLL dd, y")}
+                  {format(draftRange.from, "LLL dd, y")} -{" "}
+                  {format(draftRange.to, "LLL dd, y")}
                 </>
               ) : (
-                format(date.from, "LLL dd, y")
+                format(draftRange.from, "LLL dd, y")
               )
             ) : (
               <span>Pick a date range</span>
@@ -92,7 +115,7 @@ export function DateRangePickerWithPresets({
             onValueChange={(value) => {
               const preset = presets.find((p) => p.label === value);
               if (preset) {
-                handleDateChange(preset.getValue());
+                applyRange(preset.getValue());
               }
             }}
           >
@@ -111,9 +134,9 @@ export function DateRangePickerWithPresets({
             <Calendar
               initialFocus
               mode="range"
-              defaultMonth={date?.from}
-              selected={date}
-              onSelect={handleDateChange}
+              defaultMonth={draftRange?.from ?? date?.from}
+              selected={draftRange}
+              onSelect={handleCalendarSelect}
               numberOfMonths={2}
             />
           </div>
