@@ -39,6 +39,8 @@ export function useUploadExpenses(statementIds: string[]) {
 
     setExpenses([]);
 
+    setExpenses([]);
+
     // First, fetch any existing expenses for these statement IDs
     const fetchExistingExpenses = async () => {
       try {
