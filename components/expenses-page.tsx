@@ -1,8 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { Loader2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { DateRange } from "react-day-picker";
 import { toast } from "sonner";
 import { bulkDeleteExpenses, updateExpense } from "@/app/actions/expense";
+import { DateRangePickerWithPresets } from "@/components/date-range-picker-with-presets";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -16,13 +20,89 @@ import {
   useElectricExpenses,
 } from "@/hooks/use-electric-expenses";
 import type { DisplayExpenseWithDuplicate } from "@/lib/types/expense";
+import {
+  createDateRange,
+  dateToPlainDate,
+  getLastNMonths,
+  plainDateRangeToDateRange,
+} from "@/lib/utils/temporal-dates";
 import { EditExpenseDialog } from "./edit-expense-dialog";
 import { ExpensesTableVirtualized } from "./expenses-table-virtualized";
 
+// Get default date range (last 3 complete months)
+const getDefaultDateRange = (): DateRange => {
+  const plainDateRange = getLastNMonths(3);
+  return plainDateRangeToDateRange(plainDateRange);
+};
+
 export function ExpensesPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [editingExpense, setEditingExpense] =
     useState<DisplayExpenseWithDuplicate | null>(null);
   const [filters, setFilters] = useState<ExpenseFilters>({});
+
+  // Parse date range from URL params or use default
+  const dateRange = useMemo((): DateRange | undefined => {
+    const fromParam = searchParams.get("from");
+    const toParam = searchParams.get("to");
+
+    if (fromParam && toParam) {
+      const plainDateRange = createDateRange(fromParam, toParam);
+
+      if (plainDateRange) {
+        return plainDateRangeToDateRange(plainDateRange);
+      }
+    }
+
+    return getDefaultDateRange();
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (dateRange?.from && dateRange?.to) {
+      const fromPlainDate = dateToPlainDate(dateRange.from);
+      const toPlainDate = dateToPlainDate(dateRange.to);
+
+      setFilters((prev) => ({
+        ...prev,
+        dateRange: {
+          start: fromPlainDate.toString(),
+          end: toPlainDate.toString(),
+        },
+      }));
+      return;
+    }
+
+    setFilters((prev) => {
+      if (!prev.dateRange) {
+        return prev;
+      }
+
+      const nextFilters = { ...prev };
+      delete nextFilters.dateRange;
+      return nextFilters;
+    });
+  }, [dateRange]);
+
+  const handleDateRangeChange = useCallback(
+    (newDateRange: DateRange | undefined) => {
+      const params = new URLSearchParams(searchParams.toString());
+
+      if (newDateRange?.from && newDateRange?.to) {
+        const fromPlainDate = dateToPlainDate(newDateRange.from);
+        const toPlainDate = dateToPlainDate(newDateRange.to);
+
+        params.set("from", fromPlainDate.toString());
+        params.set("to", toPlainDate.toString());
+      } else {
+        params.delete("from");
+        params.delete("to");
+      }
+
+      router.push(`/expenses?${params.toString()}`);
+    },
+    [router, searchParams]
+  );
 
   const { expenses, loading, error } = useElectricExpenses({
     filters,
@@ -96,11 +176,28 @@ export function ExpensesPage() {
     <div className="flex flex-col h-full">
       <Card className="flex-1 flex flex-col overflow-hidden">
         <CardHeader className="flex-shrink-0">
-          <CardTitle>Expenses</CardTitle>
-          <CardDescription>
-            Manage your expenses with advanced filtering, selection, and
-            real-time sync.
-          </CardDescription>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle>Expenses</CardTitle>
+              <CardDescription>
+                Manage your expenses with advanced filtering, selection, and
+                real-time sync.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3">
+              {loading && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Loading...</span>
+                </div>
+              )}
+              <DateRangePickerWithPresets
+                date={dateRange}
+                onDateChange={handleDateRangeChange}
+                className="flex-shrink-0"
+              />
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="flex-1 flex flex-col overflow-hidden">
           <ExpensesTableVirtualized
