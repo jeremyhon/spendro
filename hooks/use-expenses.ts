@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import { Temporal } from "temporal-polyfill";
 import { useAuth } from "@/components/auth-provider";
 import { usePocketbaseExpenses } from "@/hooks/use-pocketbase-expenses";
 import {
@@ -9,6 +10,10 @@ import {
 } from "@/lib/pocketbase/expenses";
 import type { DisplayExpenseWithDuplicate } from "@/lib/types/expense";
 import { transformDatabaseRowsToDisplay } from "@/lib/utils/display-transformers";
+import {
+  createDateRange,
+  plainDateFromString,
+} from "@/lib/utils/temporal-dates";
 
 export interface ExpenseFilters {
   dateRange?: {
@@ -42,10 +47,6 @@ interface UseExpensesReturn {
   filteredCount: number;
 }
 
-function formatDateOnly(date: Date) {
-  return date.toISOString().split("T")[0];
-}
-
 /**
  * Hook for managing expenses with PocketBase sync
  * Applies filter logic client-side after fetching the user's expense list
@@ -64,32 +65,38 @@ export function useExpenses(
     enabled: Boolean(user?.id) && autoSubscribe,
   });
 
+  const defaultDateRange = useMemo(() => {
+    const end = Temporal.Now.plainDateISO();
+    const start = end.subtract({ months: monthsBack });
+    return { from: start, to: end };
+  }, [monthsBack]);
+
   const dateRange = useMemo(() => {
     if (filters?.dateRange?.start && filters?.dateRange?.end) {
-      return filters.dateRange;
+      const parsed = createDateRange(
+        filters.dateRange.start,
+        filters.dateRange.end
+      );
+      if (parsed) {
+        return parsed;
+      }
     }
 
-    const end = new Date();
-    const start = new Date();
-    start.setMonth(start.getMonth() - monthsBack);
-
-    return {
-      start: formatDateOnly(start),
-      end: formatDateOnly(end),
-    };
-  }, [
-    filters?.dateRange?.start,
-    filters?.dateRange?.end,
-    filters?.dateRange,
-    monthsBack,
-  ]);
+    return defaultDateRange;
+  }, [defaultDateRange, filters?.dateRange?.end, filters?.dateRange?.start]);
 
   const baseFilteredRows = useMemo(() => {
     if (!user?.id || !autoSubscribe) return [];
 
     return dbExpenses.filter((expense) => {
       if (dateRange) {
-        if (expense.date < dateRange.start || expense.date > dateRange.end) {
+        const expenseDate = plainDateFromString(expense.date);
+        if (!expenseDate) return false;
+
+        if (
+          Temporal.PlainDate.compare(expenseDate, dateRange.from) < 0 ||
+          Temporal.PlainDate.compare(expenseDate, dateRange.to) > 0
+        ) {
           return false;
         }
       }
@@ -145,6 +152,11 @@ export function useExpenses(
       }
       if (sortBy === "merchant") {
         return a.merchant.localeCompare(b.merchant) * direction;
+      }
+      const aDate = plainDateFromString(a.date);
+      const bDate = plainDateFromString(b.date);
+      if (aDate && bDate) {
+        return Temporal.PlainDate.compare(aDate, bDate) * direction;
       }
       return (
         (new Date(a.date).getTime() - new Date(b.date).getTime()) * direction

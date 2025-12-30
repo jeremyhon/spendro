@@ -19,15 +19,21 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 type AuthError = { message: string; status?: number };
 
-const COOKIE_OPTIONS = {
-  httpOnly: false,
-  secure: false,
-  sameSite: "lax",
-} as const;
+async function syncPocketbaseCookie() {
+  try {
+    const isValid = pocketbase.authStore.isValid;
+    const token = isValid ? pocketbase.authStore.token : null;
+    const record = isValid ? pocketbase.authStore.record : null;
 
-function syncPocketbaseCookie() {
-  // biome-ignore lint/suspicious/noDocumentCookie: PocketBase SDK cookie sync.
-  document.cookie = pocketbase.authStore.exportToCookie(COOKIE_OPTIONS);
+    await fetch("/api/pocketbase/auth-cookie", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ token, record }),
+    });
+  } catch (error) {
+    console.error("Failed to sync PocketBase auth cookie:", error);
+  }
 }
 
 export function useAuth() {
@@ -49,7 +55,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const removeListener = pocketbase.authStore.onChange((_token, model) => {
       setUser(model ?? null);
       setLoading(false);
-      syncPocketbaseCookie();
+      void syncPocketbaseCookie();
     }, true);
 
     return () => removeListener();
@@ -60,7 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const auth = await pocketbase
         .collection("users")
         .authWithPassword(email, password);
-      syncPocketbaseCookie();
+      void syncPocketbaseCookie();
       return { data: { user: auth.record } };
     } catch (error) {
       const message =
@@ -72,7 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     try {
       pocketbase.authStore.clear();
-      syncPocketbaseCookie();
+      void syncPocketbaseCookie();
     } catch (error) {
       console.error("Sign out error:", error);
     }
