@@ -1,10 +1,6 @@
 import crypto from "node:crypto";
-import type { SupabaseClient } from "@supabase/supabase-js";
-import {
-  getCategories,
-  getOrCreateCategoryByName,
-} from "@/app/actions/categories";
-import { createClient } from "@/lib/supabase/server";
+import { getOrCreateCategoryByName } from "@/app/actions/categories";
+import { createPocketbaseServerClient } from "@/lib/pocketbase/server";
 import type {
   AIExpenseInput,
   ExpenseInsertData,
@@ -95,19 +91,21 @@ async function convertExpenseToRecord(
  * Insert expense record into database with validation
  */
 async function insertExpenseRecord(
-  supabase: SupabaseClient,
+  pb: Awaited<ReturnType<typeof createPocketbaseServerClient>>,
   expenseRecord: ExpenseInsertData
 ): Promise<boolean> {
   // Validate before inserting
   const validatedRecord = validateExpenseInsert(expenseRecord);
 
-  const { error } = await supabase
-    .from("expenses")
-    .insert([validatedRecord])
-    .select();
-
-  if (error && error.code !== "23505") {
-    console.warn("Failed to insert expense:", error.message);
+  try {
+    await pb.collection("expenses").create(validatedRecord);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to insert expense";
+    if (message.toLowerCase().includes("unique")) {
+      return false;
+    }
+    console.warn("Failed to insert expense:", message);
     return false;
   }
 
@@ -118,11 +116,11 @@ async function insertExpenseRecord(
  * Update statement status in database
  */
 async function updateStatementStatus(
-  supabase: SupabaseClient,
+  pb: Awaited<ReturnType<typeof createPocketbaseServerClient>>,
   statementId: string,
   status: StatementStatus
 ): Promise<void> {
-  await supabase.from("statements").update({ status }).eq("id", statementId);
+  await pb.collection("statements").update(statementId, { status });
 }
 
 /**
@@ -133,12 +131,16 @@ export async function processPdfExpenses(
   statementId: string,
   userId: string
 ): Promise<void> {
-  const supabase = await createClient();
+  const pb = await createPocketbaseServerClient();
   let expenseCount = 0;
 
   try {
     // Fetch user categories for AI processing
-    const userCategories = await getCategories();
+    const userCategories = await pb.collection("categories").getFullList<{
+      name: string;
+    }>({
+      filter: `user_id = "${userId}"`,
+    });
     const categoryNames = userCategories.map((cat) => cat.name);
 
     // Extract expenses from PDF using AI
@@ -156,7 +158,7 @@ export async function processPdfExpenses(
       );
 
       // Insert immediately for real-time processing
-      await insertExpenseRecord(supabase, expenseRecord);
+      await insertExpenseRecord(pb, expenseRecord);
     }
 
     if (expenseCount === 0) {
@@ -168,10 +170,10 @@ export async function processPdfExpenses(
     );
 
     // Mark statement as completed
-    await updateStatementStatus(supabase, statementId, "completed");
+    await updateStatementStatus(pb, statementId, "completed");
   } catch (error) {
     console.error(`Processing failed for statement ${statementId}:`, error);
-    await updateStatementStatus(supabase, statementId, "failed");
+    await updateStatementStatus(pb, statementId, "failed");
     throw error;
   }
 }

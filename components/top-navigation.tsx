@@ -93,7 +93,9 @@ export function TopNavigation() {
                 className="relative h-8 w-8 rounded-full p-0"
               >
                 <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-sm font-medium">
-                  {user?.email?.[0]?.toUpperCase()}
+                  {(user as { email?: string } | null)?.email
+                    ?.charAt(0)
+                    ?.toUpperCase()}
                 </div>
               </Button>
             </DropdownMenuTrigger>
@@ -102,7 +104,7 @@ export function TopNavigation() {
                 <div className="flex flex-col space-y-1">
                   <p className="text-sm font-medium leading-none">Account</p>
                   <p className="text-xs leading-none text-muted-foreground">
-                    {user?.email}
+                    {(user as { email?: string } | null)?.email}
                   </p>
                 </div>
               </DropdownMenuLabel>

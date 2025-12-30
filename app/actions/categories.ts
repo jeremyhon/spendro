@@ -1,6 +1,7 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
+import { updateTag } from "next/cache";
+import { getPocketbaseServerAuth } from "@/lib/pocketbase/server";
 import type {
   Category,
   CategoryDeleteOptions,
@@ -18,22 +19,15 @@ import {
  * Get all categories for the current user
  */
 export async function getCategories(): Promise<Category[]> {
-  const supabase = await createClient();
-
-  const { data: user } = await supabase.auth.getUser();
-  if (!user.user) {
+  const { pb, userId } = await getPocketbaseServerAuth();
+  if (!userId) {
     throw new Error("User not authenticated");
   }
 
-  const { data, error } = await supabase
-    .from("categories")
-    .select("*")
-    .eq("user_id", user.user.id)
-    .order("name");
-
-  if (error) {
-    throw new Error(`Failed to fetch categories: ${error.message}`);
-  }
+  const data = await pb.collection("categories").getFullList<Category>({
+    filter: `user_id = "${userId}"`,
+    sort: "name",
+  });
 
   return data || [];
 }
@@ -42,10 +36,8 @@ export async function getCategories(): Promise<Category[]> {
  * Create a new category
  */
 export async function createCategory(input: CategoryInsert): Promise<Category> {
-  const supabase = await createClient();
-
-  const { data: user } = await supabase.auth.getUser();
-  if (!user.user) {
+  const { pb, userId } = await getPocketbaseServerAuth();
+  if (!userId) {
     throw new Error("User not authenticated");
   }
 
@@ -53,36 +45,33 @@ export async function createCategory(input: CategoryInsert): Promise<Category> {
   const validatedInput = categoryInsertSchema.parse(input);
 
   // Check category limit
-  const { count } = await supabase
-    .from("categories")
-    .select("*", { count: "exact", head: true })
-    .eq("user_id", user.user.id);
+  const countResult = await pb.collection("categories").getList(1, 1, {
+    filter: `user_id = "${userId}"`,
+  });
 
-  if (count && count >= MAX_CATEGORIES_PER_USER) {
+  if (countResult.totalItems >= MAX_CATEGORIES_PER_USER) {
     throw new Error(`Maximum ${MAX_CATEGORIES_PER_USER} categories allowed`);
   }
 
   // Create category
-  const { data, error } = await supabase
-    .from("categories")
-    .insert({
-      user_id: user.user.id,
+  try {
+    const data = await pb.collection("categories").create<Category>({
+      user_id: userId,
       name: validatedInput.name,
       description: validatedInput.description || null,
       is_default: false,
-    })
-    .select()
-    .single();
+    });
 
-  if (error) {
-    if (error.code === "23505") {
-      // Unique violation
+    updateTag("categories");
+    return data;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to create category";
+    if (message.toLowerCase().includes("unique")) {
       throw new Error("Category with this name already exists");
     }
-    throw new Error(`Failed to create category: ${error.message}`);
+    throw new Error(`Failed to create category: ${message}`);
   }
-
-  return data;
 }
 
 /**
@@ -92,40 +81,43 @@ export async function updateCategory(
   categoryId: string,
   input: CategoryUpdate
 ): Promise<Category> {
-  const supabase = await createClient();
-
-  const { data: user } = await supabase.auth.getUser();
-  if (!user.user) {
+  const { pb, userId } = await getPocketbaseServerAuth();
+  if (!userId) {
     throw new Error("User not authenticated");
   }
 
   // Validate input
   const validatedInput = categoryUpdateSchema.parse(input);
 
-  const { data, error } = await supabase
-    .from("categories")
-    .update({
-      name: validatedInput.name,
-      description: validatedInput.description || null,
-    })
-    .eq("id", categoryId)
-    .eq("user_id", user.user.id)
-    .select()
-    .single();
+  try {
+    const data = await pb
+      .collection("categories")
+      .update<Category>(categoryId, {
+        name: validatedInput.name,
+        description: validatedInput.description || null,
+      });
 
-  if (error) {
-    if (error.code === "23505") {
-      // Unique violation
+    const expenses = await pb.collection("expenses").getFullList({
+      filter: `user_id = "${userId}" && category_id = "${categoryId}"`,
+    });
+
+    for (const expense of expenses) {
+      await pb.collection("expenses").update(expense.id, {
+        category: data.name,
+        category_text: data.name,
+      });
+    }
+
+    updateTag("categories");
+    return data;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to update category";
+    if (message.toLowerCase().includes("unique")) {
       throw new Error("Category with this name already exists");
     }
-    throw new Error(`Failed to update category: ${error.message}`);
+    throw new Error(`Failed to update category: ${message}`);
   }
-
-  if (!data) {
-    throw new Error("Category not found");
-  }
-
-  return data;
 }
 
 /**
@@ -135,27 +127,52 @@ export async function deleteCategory(
   categoryId: string,
   options?: CategoryDeleteOptions
 ): Promise<CategoryDeleteResult> {
-  const supabase = await createClient();
-
-  const { data: user } = await supabase.auth.getUser();
-  if (!user.user) {
+  const { pb, userId } = await getPocketbaseServerAuth();
+  if (!userId) {
     throw new Error("User not authenticated");
   }
 
-  // Call the database function
-  const { data, error } = await supabase.rpc(
-    "delete_category_with_reassignment",
-    {
-      p_category_id: categoryId,
-      p_target_category_id: options?.targetCategoryId || null,
-    }
-  );
+  let reassignedCount = 0;
+  let deletedCount = 0;
 
-  if (error) {
-    throw new Error(`Failed to delete category: ${error.message}`);
+  if (options?.targetCategoryId) {
+    const targetCategory = await pb
+      .collection("categories")
+      .getOne<Category>(options.targetCategoryId);
+
+    const expensesToUpdate = await pb.collection("expenses").getFullList({
+      filter: `user_id = "${userId}" && category_id = "${categoryId}"`,
+    });
+
+    for (const expense of expensesToUpdate) {
+      await pb.collection("expenses").update(expense.id, {
+        category_id: targetCategory.id,
+        category: targetCategory.name,
+        category_text: targetCategory.name,
+      });
+    }
+
+    reassignedCount = expensesToUpdate.length;
+  } else {
+    const expensesToDelete = await pb.collection("expenses").getFullList({
+      filter: `user_id = "${userId}" && category_id = "${categoryId}"`,
+    });
+
+    for (const expense of expensesToDelete) {
+      await pb.collection("expenses").delete(expense.id);
+    }
+
+    deletedCount = expensesToDelete.length;
   }
 
-  return data as CategoryDeleteResult;
+  await pb.collection("categories").delete(categoryId);
+
+  updateTag("categories");
+  return {
+    success: true,
+    reassigned_count: reassignedCount,
+    deleted_count: deletedCount,
+  };
 }
 
 /**
@@ -164,24 +181,16 @@ export async function deleteCategory(
 export async function getCategoryExpenseCount(
   categoryId: string
 ): Promise<number> {
-  const supabase = await createClient();
-
-  const { data: user } = await supabase.auth.getUser();
-  if (!user.user) {
+  const { pb, userId } = await getPocketbaseServerAuth();
+  if (!userId) {
     throw new Error("User not authenticated");
   }
 
-  const { count, error } = await supabase
-    .from("expenses")
-    .select("*", { count: "exact", head: true })
-    .eq("category_id", categoryId)
-    .eq("user_id", user.user.id);
+  const countResult = await pb.collection("expenses").getList(1, 1, {
+    filter: `user_id = "${userId}" && category_id = "${categoryId}"`,
+  });
 
-  if (error) {
-    throw new Error(`Failed to count expenses: ${error.message}`);
-  }
-
-  return count || 0;
+  return countResult.totalItems;
 }
 
 /**
@@ -192,47 +201,35 @@ export async function getOrCreateCategoryByName(
   categoryName: string,
   userId: string
 ): Promise<string> {
-  const supabase = await createClient();
+  const { pb } = await getPocketbaseServerAuth();
 
-  // First, try to find existing category (case-insensitive)
-  const { data: existingCategory } = await supabase
-    .from("categories")
-    .select("id")
-    .eq("user_id", userId)
-    .ilike("name", categoryName)
-    .single();
+  const existingCategories = await pb.collection("categories").getFullList<{
+    id: string;
+    name: string;
+  }>({
+    filter: `user_id = "${userId}"`,
+  });
 
-  if (existingCategory) {
-    return existingCategory.id;
+  const match = existingCategories.find(
+    (category) => category.name.toLowerCase() === categoryName.toLowerCase()
+  );
+
+  if (match) {
+    return match.id;
   }
 
-  // If not found, create new category
-  const { data: newCategory, error } = await supabase
-    .from("categories")
-    .insert({
+  try {
+    const created = await pb.collection("categories").create<{ id: string }>({
       user_id: userId,
       name: categoryName,
       is_default: false,
-    })
-    .select("id")
-    .single();
+    });
 
-  if (error) {
-    // Handle race condition - another process might have created it
-    if (error.code === "23505") {
-      const { data: retryCategory } = await supabase
-        .from("categories")
-        .select("id")
-        .eq("user_id", userId)
-        .ilike("name", categoryName)
-        .single();
-
-      if (retryCategory) {
-        return retryCategory.id;
-      }
-    }
-    throw new Error(`Failed to create category: ${error.message}`);
+    updateTag("categories");
+    return created.id;
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to create category";
+    throw new Error(`Failed to create category: ${message}`);
   }
-
-  return newCategory.id;
 }

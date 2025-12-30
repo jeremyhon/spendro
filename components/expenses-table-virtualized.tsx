@@ -33,7 +33,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import type { ExpenseFilters } from "@/hooks/use-electric-expenses";
+import type { ExpenseFilters } from "@/hooks/use-expenses";
 import type { DisplayExpenseWithDuplicate } from "@/lib/types/expense";
 import { ExpenseBulkActions } from "./expense-bulk-actions";
 import { ExpenseColumnVisibility } from "./expense-column-visibility";

@@ -9,11 +9,15 @@ export function plainDateFromString(
   dateStr: string
 ): Temporal.PlainDate | null {
   try {
+    const normalized = dateStr.trim();
+    const baseDate =
+      normalized.split("T")[0]?.split(" ")[0]?.trim() ?? normalized;
+
     // Validate format YYYY-MM-DD with strict regex
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(dateStr)) return null;
+    if (!dateRegex.test(baseDate)) return null;
 
-    const parts = dateStr.split("-");
+    const parts = baseDate.split("-");
     if (parts.length !== 3) return null;
 
     const [year, month, day] = parts.map(Number);

@@ -15,10 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  type ExpenseFilters,
-  useElectricExpenses,
-} from "@/hooks/use-electric-expenses";
+import { type ExpenseFilters, useExpenses } from "@/hooks/use-expenses";
 import type { DisplayExpenseWithDuplicate } from "@/lib/types/expense";
 import {
   createDateRange,
@@ -104,7 +101,7 @@ export function ExpensesPage() {
     [router, searchParams]
   );
 
-  const { expenses, loading, error } = useElectricExpenses({
+  const { expenses, loading, error } = useExpenses({
     filters,
     autoSubscribe: true,
     monthsBack: 6,

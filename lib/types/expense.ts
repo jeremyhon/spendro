@@ -36,9 +36,9 @@ export type Currency = (typeof CURRENCIES)[number];
 
 // Zod schemas for validation
 export const databaseExpenseRowSchema = z.object({
-  id: z.string().uuid(),
-  user_id: z.string().uuid(),
-  statement_id: z.string().uuid(),
+  id: z.string().min(1),
+  user_id: z.string().min(1),
+  statement_id: z.string().min(1),
   created_at: z.string(),
   date: z.string(),
   description: z.string(),
@@ -54,7 +54,7 @@ export const databaseExpenseRowSchema = z.object({
 });
 
 export const displayExpenseSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().min(1),
   date: z.string(),
   description: z.string(),
   merchant: z.string(),
@@ -96,8 +96,8 @@ export function createAiExpenseSchema(validCategories: string[]) {
 }
 
 export const expenseInsertDataSchema = z.object({
-  statement_id: z.string().uuid(),
-  user_id: z.string().uuid(),
+  statement_id: z.string().min(1),
+  user_id: z.string().min(1),
   date: z.string(),
   description: z.string(),
   merchant: z.string().optional(),
@@ -106,7 +106,7 @@ export const expenseInsertDataSchema = z.object({
   original_currency: z.string(),
   currency: z.string(),
   category: z.string(), // Still accept category name during transition
-  category_id: z.string().uuid().optional(), // New category ID field
+  category_id: z.string().min(1).optional(), // New category ID field
   line_hash: z.string(),
 });
 
@@ -192,17 +192,17 @@ export const realtimeInsertPayloadSchema = databaseExpenseRowSchema;
 export const realtimeUpdatePayloadSchema = databaseExpenseRowSchema
   .partial()
   .extend({
-    id: z.string().uuid(), // ID is always present in updates
+    id: z.string().min(1), // ID is always present in updates
   });
 export const realtimeDeletePayloadSchema = z.object({
-  id: z.string().uuid(),
+  id: z.string().min(1),
   // May include other fields that Supabase sends in DELETE events
 });
 
 // Merchant mapping schemas
 export const merchantMappingSchema = z.object({
-  id: z.string().uuid(),
-  user_id: z.string().uuid(),
+  id: z.string().min(1),
+  user_id: z.string().min(1),
   merchant_name: z.string(),
   category: z.string(),
   created_at: z.string(),
@@ -210,7 +210,7 @@ export const merchantMappingSchema = z.object({
 });
 
 export const merchantMappingInsertSchema = z.object({
-  user_id: z.string().uuid(),
+  user_id: z.string().min(1),
   merchant_name: z.string(),
   category: z.string(),
 });

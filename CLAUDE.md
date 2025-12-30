@@ -24,7 +24,7 @@ supabase migration new <name>  # Create new migration
 bun run db:push       # Push migrations to remote database (uses .env.local password)
 
 # Database Reset (Development)
-bun run reset        # Reset database and clear blob storage (uses scripts/reset-db.ts)
+bun run reset        # Reset database and storage (uses scripts/reset-db.ts)
 
 # Testing
 bun test             # Run tests using Bun's built-in test runner
@@ -56,15 +56,14 @@ Spendro is an AI-powered expense tracking application built with Next.js App Rou
 - **Bun** as package manager and JavaScript runtime
 - **Biome** for linting and formatting (not ESLint/Prettier)
 - **Tailwind CSS** with shadcn/ui components
-- **Supabase** for authentication, database, and real-time updates
-- **ElectricSQL** for high-performance real-time data synchronization
-- **Vercel Blob** for PDF file storage
+- **PocketBase** for authentication and data access
+- **Supabase Storage** for PDF file storage
 - **Google Gemini AI** (via AI SDK) for PDF expense extraction
 - **@tanstack/react-virtual** for virtualized table rendering
 
 ### Key Architecture Patterns
 
-1. **Real-time Expense Processing**: Uses streaming AI responses to insert expenses as they're extracted from PDFs, providing real-time updates via Supabase realtime subscriptions.
+1. **Real-time Expense Processing**: Uses streaming AI responses to insert expenses as they're extracted from PDFs, providing real-time updates via PocketBase SSE subscriptions.
 
 2. **Duplicate Detection**: Implements both file-level (SHA256 checksum) and expense-level (line hash) duplicate detection to prevent processing the same statement or expense twice. Note: File-level duplicate detection is currently disabled in `app/actions/upload.ts` for development iteration.
 
@@ -74,9 +73,7 @@ Spendro is an AI-powered expense tracking application built with Next.js App Rou
 
 5. **Timezone-Safe Date Handling**: Uses Temporal PlainDate objects (`lib/utils/temporal-dates.ts`) for consistent date operations across timezones, avoiding Date constructor inconsistencies.
 
-6. **ElectricSQL Real-time Sync**: Implements ElectricSQL for high-performance data synchronization with shape-based filtering and client-side operations on cached data.
-
-7. **Virtual Scrolling**: Uses @tanstack/react-virtual for rendering large datasets efficiently, handling thousands of expense records with smooth performance.
+6. **Virtual Scrolling**: Uses @tanstack/react-virtual for rendering large datasets efficiently, handling thousands of expense records with smooth performance.
 
 ### Database Schema
 - `statements` - Stores uploaded PDF metadata with status tracking
@@ -87,24 +84,23 @@ Spendro is an AI-powered expense tracking application built with Next.js App Rou
 ### Important Implementation Details
 
 1. **AI Processing Flow**:
-   - Upload PDF to Vercel Blob storage
+   - Upload PDF to Supabase Storage
    - Stream PDF content to Google Gemini AI
    - Extract expenses with real-time insertion
    - Automatic categorization and currency conversion
    - Foreign transactions automatically categorized as "Travel"
    - Currency conversion using exchangerate-api.com with fallback to original amount
 
-2. **Authentication**: Uses Supabase Auth with client/server patterns:
-   - `lib/supabase/client.ts` for browser operations
-   - `lib/supabase/server.ts` for server-side operations
-   - `app/api/electric/auth/route.ts` for ElectricSQL authentication proxy
+2. **Authentication**: Uses PocketBase Auth with client/server patterns:
+   - `lib/pocketbase/client.ts` for browser operations
+   - `lib/pocketbase/server.ts` for server-side operations
+   - `components/auth-provider.tsx` for auth + cookie sync
 
-3. **ElectricSQL Data Management**:
-   - `lib/electric/client.ts` - ElectricSQL client configuration and URL handling
-   - `lib/electric/shapes.ts` - Shape registry for filtered data synchronization
-   - `hooks/use-electric-expenses.ts` - Real-time expense data hooks with client-side filtering
-   - Progressive loading: recent expenses load first, historical data on-demand
-   - Client-side operations on cached data for instant UI responses
+3. **PocketBase Data Management**:
+   - `lib/pocketbase/expenses.ts` - QueryCollection + parsing for expenses
+   - `hooks/use-pocketbase-expenses.ts` - live query + SSE invalidation
+   - `hooks/use-expenses.ts` - filtered expense hook for the UI
+   - Real-time updates via PocketBase SSE subscriptions
 
 4. **Component Architecture**:
    - `components/expenses-table-virtualized.tsx` - High-performance virtual scrolling table
@@ -137,9 +133,9 @@ Spendro is an AI-powered expense tracking application built with Next.js App Rou
 - `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabase anonymous key  
 - `GOOGLE_GENERATIVE_AI_API_KEY` - Google AI API key for Gemini
-- `BLOB_READ_WRITE_TOKEN` - Vercel Blob storage token
-- `ELECTRIC_SOURCE_ID` - ElectricSQL source ID for real-time sync
-- `ELECTRIC_SOURCE_SECRET` - ElectricSQL source secret for authentication
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key (storage uploads)
+- `SUPABASE_STORAGE_BUCKET` - Supabase bucket name (optional; defaults to `statements`)
+- `NEXT_PUBLIC_POCKETBASE_URL` - PocketBase base URL (optional; defaults to localhost)
 
 **Adding New Environment Variables:**
 When adding new environment variables, always update `lib/env.ts` to include proper validation:
@@ -148,108 +144,70 @@ When adding new environment variables, always update `lib/env.ts` to include pro
 3. Add to `runtimeEnv` mapping
 4. The application will enforce these variables at startup
 
-## ElectricSQL Integration
+## PocketBase Integration
 
-Spendro uses ElectricSQL for high-performance real-time data synchronization, providing instant UI responses and scalable performance for large datasets.
+Spendro uses PocketBase for auth and real-time data updates. Expense lists are cached with QueryCollection and invalidated via SSE events.
 
 ### Key Benefits
-- **Real-time Sync**: Changes appear instantly across all connected clients
-- **Client-side Operations**: Filtering, sorting, and searching on cached data with zero latency
-- **Progressive Loading**: Recent expenses load first, historical data loads on-demand
-- **Scalable Performance**: Handles thousands of records with smooth virtual scrolling
-- **Offline-first**: Works offline with automatic conflict resolution when reconnected
+- **Real-time Updates**: PocketBase SSE subscriptions notify the UI of changes
+- **Simple Hosting**: Single binary for local development
+- **Low Latency UI**: Client-side filtering on cached data
 
 ### Architecture Components
 
-**ElectricSQL Client** (`lib/electric/client.ts`):
+**PocketBase Client** (`lib/pocketbase/client.ts`):
 ```typescript
-// Configured with authentication proxy and proper URL handling
-const electricClient = createElectricClient({
-  url: constructElectricUrl(),
-  // Uses /api/electric/auth for secure user-filtered access
+const pocketbase = new PocketBase(baseUrl);
+```
+
+**Expense Collection** (`lib/pocketbase/expenses.ts`):
+```typescript
+const records = await pocketbase.collection("expenses").getFullList({
+  sort: "-date",
+  expand: "category_id,statement_id",
 });
 ```
 
-**Shape Registry** (`lib/electric/shapes.ts`):
+**Filtered Hooks** (`hooks/use-expenses.ts`):
 ```typescript
-// Predefined shapes for efficient data filtering
-SHAPE_REGISTRY.recentExpenses(monthsBack, filters)  // Recent data
-SHAPE_REGISTRY.historicalExpenses(from, to, filters)  // Historical data
-```
-
-**Real-time Hooks** (`hooks/use-electric-expenses.ts`):
-```typescript
-// Progressive loading with client-side filtering
-const { expenses, loading, refetch } = useElectricExpenses({
-  filters: { categories: ['Dining'], searchText: 'coffee' },
-  autoSubscribe: true,
-  monthsBack: 6
+const { expenses, loading } = useExpenses({
+  filters: { categories: ["Dining"], searchText: "coffee" },
+  monthsBack: 6,
 });
 ```
-
-**Authentication Proxy** (`app/api/electric/auth/route.ts`):
-- Automatically injects `user_id` filtering for secure multi-tenant access
-- Validates Supabase JWT tokens
-- Proxies authenticated requests to ElectricSQL service
 
 ### Usage Patterns
 
 **Basic Expense Loading**:
 ```typescript
-// Load recent expenses with real-time updates
-const { expenses, loading } = useRecentElectricExpenses(3); // 3 months back
+const { expenses, loading } = useRecentExpenses(3);
 ```
 
 **Advanced Filtering**:
 ```typescript
-// Client-side filtering with instant response
-const { expenses } = useElectricExpenses({
+const { expenses } = useExpenses({
   filters: {
-    categories: ['Dining', 'Travel'],
+    categories: ["Dining", "Travel"],
     amountRange: { min: 10, max: 500 },
-    searchText: 'restaurant',
-    dateRange: { start: '2024-01-01', end: '2024-12-31' }
-  }
+    searchText: "restaurant",
+    dateRange: { start: "2024-01-01", end: "2024-12-31" },
+  },
 });
 ```
 
-**Progressive Data Loading**:
-```typescript
-// Load historical data on-demand
-const { loadHistoricalData, hasHistoricalData } = useElectricExpenses();
-
-// User clicks "Load More" -> instant loading from ElectricSQL cache
-loadHistoricalData(); 
-```
-
-### Performance Characteristics
-
-- **Throughput**: ~5,000 row changes/second
-- **Filtering**: Millions of `field = constant` where clauses evaluated efficiently
-- **Memory**: Only visible rows rendered via virtual scrolling
-- **Bandwidth**: Efficient subset synchronization, not full table sync
-- **Latency**: Client-side operations with zero network round-trips
-
 ### Security Model
 
-ElectricSQL implements **server-side security** through the authentication proxy:
+PocketBase collection rules ensure users can only access their own data:
 
 ```typescript
-// All queries automatically filtered by user_id on the server
-// Example: "SELECT * FROM expenses WHERE category = 'Dining'"
-// Becomes: "SELECT * FROM expenses WHERE category = 'Dining' AND user_id = $user_id"
+// Example rule: user_id = @request.auth.id
 ```
-
-This ensures users can only access their own data, regardless of client-side queries.
 
 ### Development Setup
 
-1. **Environment Variables**: Set `ELECTRIC_SOURCE_ID` and `ELECTRIC_SOURCE_SECRET`
-2. **Shape Registration**: Define data shapes in `lib/electric/shapes.ts`
-3. **Hook Usage**: Use `useElectricExpenses()` for real-time data management
-4. **Client Filtering**: All filtering happens client-side for instant response
-
-The T3 env validation ensures ElectricSQL credentials are present, failing fast with clear error messages if misconfigured.
+1. **Environment Variables**: Set `NEXT_PUBLIC_POCKETBASE_URL` if not using localhost
+2. **Collections**: Ensure PocketBase collections exist (see migration script)
+3. **Hook Usage**: Use `useExpenses()` for filtered lists and real-time updates
 
 ## Development Workflow
 

@@ -71,7 +71,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
   const { expenses, updateExpense, expenseCount } =
     useUploadExpenses(statementIds);
 
-  // Use Electric SQL for real-time statement status tracking
+  // Use PocketBase for real-time statement status tracking
   const { statements: statementStatuses } = useStatementStatus({
     statementIds,
     autoSubscribe: statementIds.length > 0,
@@ -80,12 +80,12 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
   // Create a key for resetting components when statement IDs change
   const componentKey = statementIds.join(",");
 
-  // Compute upload state with Electric SQL status integration
+  // Compute upload state with PocketBase status integration
   const uploadState = useMemo<UploadState>(() => {
     const isUploading = uploads.some((u) => u.status === "uploading");
     const hasSuccessfulUploads = uploads.some((u) => u.status === "success");
 
-    // Check if any statements are still processing via Electric SQL
+    // Check if any statements are still processing via PocketBase
     const isProcessingStatements = statementStatuses.some(
       (statement) => statement.status === "processing"
     );
@@ -224,15 +224,15 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
     setSelectedExpense(null);
   };
 
-  // Helper function to get Electric SQL status for a file upload
-  const getElectricStatus = (upload: FileUpload) => {
+  // Helper function to get statement status for a file upload
+  const getStatementStatus = (upload: FileUpload) => {
     if (!upload.statementId) return null;
     return statementStatuses.find((s) => s.id === upload.statementId);
   };
 
-  // Enhanced status display that combines upload status with Electric SQL status
+  // Enhanced status display that combines upload status with statement status
   const getEnhancedStatus = (upload: FileUpload) => {
-    const electricStatus = getElectricStatus(upload);
+    const statementStatus = getStatementStatus(upload);
 
     if (upload.status === "uploading") {
       return { text: "Uploading...", variant: "default" as const };
@@ -245,8 +245,8 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
       };
     }
 
-    if (upload.status === "success" && electricStatus) {
-      switch (electricStatus.status) {
+    if (upload.status === "success" && statementStatus) {
+      switch (statementStatus.status) {
         case "processing":
           return { text: "AI processing...", variant: "default" as const };
         case "completed":
@@ -332,14 +332,14 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
             <div className="mt-4 space-y-4 max-h-60 overflow-y-auto">
               {uploads.map((upload) => {
                 const enhancedStatus = getEnhancedStatus(upload);
-                const electricStatus = getElectricStatus(upload);
+                const statementStatus = getStatementStatus(upload);
                 const showProgress =
                   upload.status === "uploading" ||
                   (upload.status === "success" &&
-                    electricStatus?.status === "processing");
+                    statementStatus?.status === "processing");
                 const isProcessing =
                   upload.status === "success" &&
-                  electricStatus?.status === "processing";
+                  statementStatus?.status === "processing";
 
                 return (
                   <div
@@ -379,7 +379,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
                       )}
                     </div>
                     {upload.status === "success" &&
-                      electricStatus?.status === "completed" && (
+                      statementStatus?.status === "completed" && (
                         <CheckCircle2 className="h-5 w-5 text-green-500" />
                       )}
                     {(upload.status === "pending" ||
@@ -463,14 +463,14 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
                 <div className="space-y-2 flex-1 min-h-0 overflow-y-auto mt-4">
                   {uploads.map((upload) => {
                     const enhancedStatus = getEnhancedStatus(upload);
-                    const electricStatus = getElectricStatus(upload);
+                    const statementStatus = getStatementStatus(upload);
                     const showProgress =
                       upload.status === "uploading" ||
                       (upload.status === "success" &&
-                        electricStatus?.status === "processing");
+                        statementStatus?.status === "processing");
                     const isProcessing =
                       upload.status === "success" &&
-                      electricStatus?.status === "processing";
+                      statementStatus?.status === "processing";
 
                     return (
                       <div
@@ -510,7 +510,7 @@ export function UploadDialog({ isOpen, onOpenChange }: UploadDialogProps) {
                           )}
                         </div>
                         {upload.status === "success" &&
-                          electricStatus?.status === "completed" && (
+                          statementStatus?.status === "completed" && (
                             <CheckCircle2 className="h-3 w-3 text-green-500 shrink-0" />
                           )}
                         {(upload.status === "pending" ||

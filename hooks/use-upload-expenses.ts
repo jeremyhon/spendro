@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { updateExpense } from "@/app/actions/expense";
-import { createClient } from "@/lib/supabase/client";
+import { pocketbase } from "@/lib/pocketbase/client";
 import type {
+  DatabaseExpenseRow,
   DisplayExpenseWithDuplicate,
   ExpenseUpdateData,
 } from "@/lib/types/expense";
@@ -14,11 +15,6 @@ import {
   transformDatabaseToDisplay,
   updateExpenseInArray,
 } from "@/lib/utils/display-transformers";
-import {
-  validateDeletePayload,
-  validateInsertPayload,
-  validateUpdatePayload,
-} from "@/lib/utils/realtime-validators";
 
 /**
  * Hook for managing expenses during upload sessions
@@ -26,8 +22,6 @@ import {
  */
 export function useUploadExpenses(statementIds: string[]) {
   const [expenses, setExpenses] = useState<DisplayExpenseWithDuplicate[]>([]);
-
-  const supabase = useMemo(() => createClient(), []);
 
   // Create a stable key for the subscription
   const subscriptionKey = useMemo(() => statementIds.join(","), [statementIds]);
@@ -41,91 +35,84 @@ export function useUploadExpenses(statementIds: string[]) {
   // Set up realtime subscription for specific statement IDs
   useEffect(() => {
     if (!subscriptionKey || statementIds.length === 0) return;
+    if (!pocketbase.authStore.isValid) return;
 
     setExpenses([]);
 
     // First, fetch any existing expenses for these statement IDs
     const fetchExistingExpenses = async () => {
-      const { data, error } = await supabase
-        .from("expenses")
-        .select("*")
-        .in("statement_id", statementIds);
+      try {
+        const filters = statementIds
+          .map((id) => `statement_id = "${id}"`)
+          .join(" || ");
+        const data = await pocketbase.collection("expenses").getFullList({
+          filter: filters,
+          sort: "-date",
+        });
 
-      if (error) {
+        if (data && data.length > 0) {
+          const displayExpenses = data.map((expense) =>
+            transformDatabaseToDisplay(expense as unknown as DatabaseExpenseRow)
+          );
+          setExpenses(displayExpenses as DisplayExpenseWithDuplicate[]);
+        }
+      } catch (error) {
         console.error("Error fetching expenses:", error);
-        return;
-      }
-
-      if (data && data.length > 0) {
-        const displayExpenses = data.map((expense) =>
-          transformDatabaseToDisplay(expense)
-        );
-        setExpenses(displayExpenses);
       }
     };
 
     fetchExistingExpenses();
 
-    const channel = supabase
-      .channel(`upload-expenses-${subscriptionKey}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "expenses",
-          filter: `statement_id=in.(${subscriptionKey})`,
-        },
-        (payload) => {
-          const { eventType, new: newRecord, old: oldRecord } = payload;
+    let unsubscribe: (() => void) | null = null;
 
-          switch (eventType) {
-            case "INSERT": {
-              const validatedPayload = validateInsertPayload(newRecord);
-              if (validatedPayload) {
-                const displayExpense =
-                  transformDatabaseToDisplay(validatedPayload);
-                setExpenses((prev) => addExpenseToArray(prev, displayExpense));
-              } else {
-                console.error("Invalid INSERT payload received:", newRecord);
-              }
-              break;
-            }
+    pocketbase
+      .collection("expenses")
+      .subscribe("*", (event) => {
+        const record = event.record;
+        const statementId = Array.isArray(record.statement_id)
+          ? record.statement_id[0]
+          : record.statement_id;
 
-            case "UPDATE": {
-              const validatedPayload = validateUpdatePayload(newRecord);
-              if (validatedPayload) {
-                const updatedFields =
-                  transformDatabaseToDisplay(validatedPayload);
-                setExpenses((prev) =>
-                  updateExpenseInArray(prev, updatedFields)
-                );
-              } else {
-                console.error("Invalid UPDATE payload received:", newRecord);
-              }
-              break;
-            }
+        if (!statementId || !statementIds.includes(statementId)) {
+          return;
+        }
 
-            case "DELETE": {
-              const validatedPayload = validateDeletePayload(oldRecord);
-              if (validatedPayload) {
-                setExpenses((prev) =>
-                  removeExpenseFromArray(prev, validatedPayload.id)
-                );
-              } else {
-                console.error("Invalid DELETE payload received:", oldRecord);
-              }
-              break;
-            }
+        switch (event.action) {
+          case "create": {
+            const displayExpense = transformDatabaseToDisplay(
+              record as unknown as DatabaseExpenseRow
+            );
+            setExpenses((prev) => addExpenseToArray(prev, displayExpense));
+            break;
+          }
+          case "update": {
+            const updatedFields = transformDatabaseToDisplay(
+              record as unknown as DatabaseExpenseRow
+            );
+            setExpenses((prev) => updateExpenseInArray(prev, updatedFields));
+            break;
+          }
+          case "delete": {
+            setExpenses((prev) => removeExpenseFromArray(prev, record.id));
+            break;
           }
         }
-      )
-      .subscribe();
+      })
+      .then((handler) => {
+        unsubscribe = handler;
+      })
+      .catch((error) => {
+        console.error("Error subscribing to expenses:", error);
+      });
 
     return () => {
-      supabase.removeChannel(channel);
+      if (unsubscribe) {
+        unsubscribe();
+      } else {
+        pocketbase.collection("expenses").unsubscribe("*");
+      }
     };
-  }, [supabase, subscriptionKey, statementIds]);
+  }, [subscriptionKey, statementIds]);
 
   // Update expense function
   const handleUpdateExpense = async (

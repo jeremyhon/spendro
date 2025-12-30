@@ -2,8 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { getOrCreateCategoryByName } from "@/app/actions/categories";
-import { createClient } from "@/lib/supabase/server";
+import { getPocketbaseServerAuth } from "@/lib/pocketbase/server";
 import type {
+  DatabaseExpenseRow,
   DisplayExpenseWithDuplicate,
   ExpenseUpdateData,
 } from "@/lib/types/expense";
@@ -23,28 +24,19 @@ export async function getExpenses(): Promise<{
   expenses?: DisplayExpenseWithDuplicate[];
   error?: string;
 }> {
-  const supabase = await createClient();
+  const { pb, userId } = await getPocketbaseServerAuth();
 
-  // Check if user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
   // Fetch all expenses for the user using the view that includes category names
-  const { data: expenses, error } = await supabase
-    .from("expenses_with_categories")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("date", { ascending: false });
-
-  if (error) {
-    console.error("Error fetching expenses:", error);
-    return { error: error.message };
-  }
+  const expenses = await pb
+    .collection("expenses")
+    .getFullList<DatabaseExpenseRow>({
+      filter: `user_id = "${userId}"`,
+      sort: "-date",
+    });
 
   // Transform database format to display format and check for duplicates
   const displayExpenses = transformDatabaseRowsToDisplay(expenses || []);
@@ -56,57 +48,49 @@ export async function updateExpense(
   expenseId: string,
   data: ExpenseUpdateData
 ) {
-  const supabase = await createClient();
+  const { pb, userId } = await getPocketbaseServerAuth();
 
-  // Check if user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
   // Get the original expense to check if category changed
-  const { data: originalExpense, error: fetchError } = await supabase
-    .from("expenses")
-    .select("category, merchant")
-    .eq("id", expenseId)
-    .eq("user_id", user.id)
-    .single();
-
-  if (fetchError) {
-    console.error("Error fetching original expense:", fetchError);
+  let originalExpense: { category?: string; merchant?: string } | null = null;
+  try {
+    originalExpense = await pb.collection("expenses").getOne(expenseId, {
+      fields: "category,merchant",
+    });
+  } catch (error) {
+    console.error("Error fetching original expense:", error);
     return { error: "Failed to fetch original expense" };
   }
 
   // Get category ID for the category name
-  const categoryId = await getOrCreateCategoryByName(data.category, user.id);
+  const categoryId = await getOrCreateCategoryByName(data.category, userId);
 
   // Update the expense in the database
-  const { error } = await supabase
-    .from("expenses")
-    .update({
+  try {
+    await pb.collection("expenses").update(expenseId, {
       description: data.description,
       merchant: data.merchant,
       category: data.category, // Keep for backward compatibility
       category_id: categoryId,
+      category_text: data.category,
       amount_sgd: data.amount,
       original_amount: data.originalAmount,
       original_currency: data.originalCurrency,
       date: data.date,
-    })
-    .eq("id", expenseId)
-    .eq("user_id", user.id); // Ensure user can only update their own expenses
-
-  if (error) {
-    console.error("Error updating expense:", error);
-    return { error: error.message };
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to update expense";
+    console.error("Error updating expense:", message);
+    return { error: message };
   }
 
   // If category changed and merchant exists, create merchant mapping
-  if (originalExpense.category !== data.category && data.merchant) {
-    await createMerchantMapping(user.id, data.merchant, data.category);
+  if (originalExpense?.category !== data.category && data.merchant) {
+    await createMerchantMapping(userId, data.merchant, data.category);
   }
 
   // Revalidate the page to reflect changes
@@ -120,64 +104,56 @@ export async function updateExpenseWithBulkMerchantUpdate(
   data: ExpenseUpdateData,
   applyToAllMerchantExpenses = false
 ): Promise<{ success?: boolean; error?: string; updatedCount?: number }> {
-  const supabase = await createClient();
+  const { pb, userId } = await getPocketbaseServerAuth();
 
-  // Check if user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
   // Get the original expense to check if category changed
-  const { data: originalExpense, error: fetchError } = await supabase
-    .from("expenses")
-    .select("category, merchant")
-    .eq("id", expenseId)
-    .eq("user_id", user.id)
-    .single();
-
-  if (fetchError) {
-    console.error("Error fetching original expense:", fetchError);
+  let originalExpense: { category?: string; merchant?: string } | null = null;
+  try {
+    originalExpense = await pb.collection("expenses").getOne(expenseId, {
+      fields: "category,merchant",
+    });
+  } catch (error) {
+    console.error("Error fetching original expense:", error);
     return { error: "Failed to fetch original expense" };
   }
 
   // Get category ID for the category name
-  const categoryId = await getOrCreateCategoryByName(data.category, user.id);
+  const categoryId = await getOrCreateCategoryByName(data.category, userId);
 
   // Update the expense in the database
-  const { error } = await supabase
-    .from("expenses")
-    .update({
+  try {
+    await pb.collection("expenses").update(expenseId, {
       description: data.description,
       merchant: data.merchant,
       category: data.category, // Keep for backward compatibility
       category_id: categoryId,
+      category_text: data.category,
       amount_sgd: data.amount,
       original_amount: data.originalAmount,
       original_currency: data.originalCurrency,
       date: data.date,
-    })
-    .eq("id", expenseId)
-    .eq("user_id", user.id); // Ensure user can only update their own expenses
-
-  if (error) {
-    console.error("Error updating expense:", error);
-    return { error: error.message };
+    });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to update expense";
+    console.error("Error updating expense:", message);
+    return { error: message };
   }
 
   let updatedCount = 1; // The single expense we just updated
 
   // If category changed and merchant exists, create merchant mapping
-  if (originalExpense.category !== data.category && data.merchant) {
-    await createMerchantMapping(user.id, data.merchant, data.category);
+  if (originalExpense?.category !== data.category && data.merchant) {
+    await createMerchantMapping(userId, data.merchant, data.category);
 
     // If user wants to apply to all merchant expenses, do bulk update
     if (applyToAllMerchantExpenses) {
       const bulkUpdateResult = await updateAllExpensesByMerchant(
-        user.id,
+        userId,
         data.merchant,
         data.category
       );
@@ -197,27 +173,20 @@ export async function updateExpenseWithBulkMerchantUpdate(
 export async function deleteExpense(
   expenseId: string
 ): Promise<{ success?: boolean; error?: string }> {
-  const supabase = await createClient();
+  const { pb, userId } = await getPocketbaseServerAuth();
 
-  // Check if user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
   // Delete the expense from the database
-  const { error } = await supabase
-    .from("expenses")
-    .delete()
-    .eq("id", expenseId)
-    .eq("user_id", user.id); // Ensure user can only delete their own expenses
-
-  if (error) {
-    console.error("Error deleting expense:", error);
-    return { error: error.message };
+  try {
+    await pb.collection("expenses").delete(expenseId);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to delete expense";
+    console.error("Error deleting expense:", message);
+    return { error: message };
   }
 
   // Revalidate the page to reflect changes
@@ -229,14 +198,9 @@ export async function deleteExpense(
 export async function bulkDeleteExpenses(
   expenseIds: string[]
 ): Promise<{ success?: boolean; error?: string; deletedCount?: number }> {
-  const supabase = await createClient();
+  const { pb, userId } = await getPocketbaseServerAuth();
 
-  // Check if user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
@@ -245,21 +209,23 @@ export async function bulkDeleteExpenses(
   }
 
   // Delete multiple expenses from the database
-  const { error, count } = await supabase
-    .from("expenses")
-    .delete({ count: "exact" })
-    .in("id", expenseIds)
-    .eq("user_id", user.id); // Ensure user can only delete their own expenses
-
-  if (error) {
-    console.error("Error bulk deleting expenses:", error);
-    return { error: error.message };
+  let deletedCount = 0;
+  for (const id of expenseIds) {
+    try {
+      await pb.collection("expenses").delete(id);
+      deletedCount += 1;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to delete expense";
+      console.error("Error bulk deleting expenses:", message);
+      return { error: message };
+    }
   }
 
   // Revalidate the page to reflect changes
   revalidatePath("/");
 
-  return { success: true, deletedCount: count || 0 };
+  return { success: true, deletedCount };
 }
 
 export async function getMonthlyExpensesByCategory(dateRange?: {
@@ -269,40 +235,25 @@ export async function getMonthlyExpensesByCategory(dateRange?: {
   data?: Array<{ month: string; [category: string]: string | number }>;
   error?: string;
 }> {
-  const supabase = await createClient();
+  const { pb, userId } = await getPocketbaseServerAuth();
 
-  // Check if user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
-  // Build query with optional date filtering
-  let query = supabase
-    .from("expenses")
-    .select("date, category, amount_sgd")
-    .eq("user_id", user.id);
-
-  // Add date filtering if dateRange is provided
+  const filters = [`user_id = "${userId}"`];
   if (dateRange?.from && dateRange?.to) {
-    // Convert JS Date to PlainDate, then use .toString() for robust YYYY-MM-DD format
     const fromStr = dateToPlainDate(dateRange.from).toString();
     const toStr = dateToPlainDate(dateRange.to).toString();
-
-    query = query.gte("date", fromStr).lte("date", toStr);
+    filters.push(`date >= "${fromStr}"`);
+    filters.push(`date <= "${toStr}"`);
   }
 
-  const { data: expenses, error } = await query.order("date", {
-    ascending: true,
+  const expenses = await pb.collection("expenses").getFullList({
+    filter: filters.join(" && "),
+    sort: "date",
+    fields: "date,category,amount_sgd",
   });
-
-  if (error) {
-    console.error("Error fetching expenses for chart:", error);
-    return { error: error.message };
-  }
 
   // Group expenses by month and category
   const monthlyData = new Map<string, Map<string, number>>();
@@ -365,40 +316,25 @@ export async function getExpenseHeadlineNumbers(dateRange?: {
   };
   error?: string;
 }> {
-  const supabase = await createClient();
+  const { pb, userId } = await getPocketbaseServerAuth();
 
-  // Check if user is authenticated
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
-  // Build query with optional date filtering
-  let query = supabase
-    .from("expenses")
-    .select("date, category, amount_sgd")
-    .eq("user_id", user.id);
-
-  // Add date filtering if dateRange is provided
+  const filters = [`user_id = "${userId}"`];
   if (dateRange?.from && dateRange?.to) {
-    // Convert JS Date to PlainDate, then use .toString() for robust YYYY-MM-DD format
     const fromStr = dateToPlainDate(dateRange.from).toString();
     const toStr = dateToPlainDate(dateRange.to).toString();
-
-    query = query.gte("date", fromStr).lte("date", toStr);
+    filters.push(`date >= "${fromStr}"`);
+    filters.push(`date <= "${toStr}"`);
   }
 
-  const { data: expenses, error } = await query.order("date", {
-    ascending: true,
+  const expenses = await pb.collection("expenses").getFullList({
+    filter: filters.join(" && "),
+    sort: "date",
+    fields: "date,category,amount_sgd",
   });
-
-  if (error) {
-    console.error("Error fetching expenses for headline numbers:", error);
-    return { error: error.message };
-  }
 
   if (!expenses || expenses.length === 0) {
     return {

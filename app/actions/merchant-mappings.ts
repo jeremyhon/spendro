@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { getPocketbaseServerAuth } from "@/lib/pocketbase/server";
 import type { MerchantMapping } from "@/lib/types/expense";
 import {
   createMerchantMapping,
@@ -17,18 +17,14 @@ export async function getMerchantMappings(): Promise<{
   mappings?: MerchantMapping[];
   error?: string;
 }> {
-  const supabase = await createClient();
+  const { userId } = await getPocketbaseServerAuth();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
   try {
-    const mappings = await listUserMerchantMappings(user.id);
+    const mappings = await listUserMerchantMappings(userId);
     return { mappings };
   } catch (error) {
     console.error("Error fetching merchant mappings:", error);
@@ -43,13 +39,9 @@ export async function createMerchantMappingAction(
   merchantName: string,
   category: string
 ): Promise<{ success?: boolean; error?: string }> {
-  const supabase = await createClient();
+  const { userId } = await getPocketbaseServerAuth();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
@@ -59,7 +51,7 @@ export async function createMerchantMappingAction(
 
   try {
     const success = await createMerchantMapping(
-      user.id,
+      userId,
       merchantName.trim(),
       category
     );
@@ -83,13 +75,9 @@ export async function updateMerchantMappingAction(
   merchantName: string,
   newCategory: string
 ): Promise<{ success?: boolean; error?: string }> {
-  const supabase = await createClient();
+  const { userId } = await getPocketbaseServerAuth();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
@@ -99,7 +87,7 @@ export async function updateMerchantMappingAction(
 
   try {
     const success = await updateMerchantMapping(
-      user.id,
+      userId,
       merchantName,
       newCategory
     );
@@ -122,18 +110,14 @@ export async function updateMerchantMappingAction(
 export async function deleteMerchantMappingAction(
   merchantName: string
 ): Promise<{ success?: boolean; error?: string }> {
-  const supabase = await createClient();
+  const { userId } = await getPocketbaseServerAuth();
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+  if (!userId) {
     return { error: "Unauthorized" };
   }
 
   try {
-    const success = await deleteMerchantMapping(user.id, merchantName);
+    const success = await deleteMerchantMapping(userId, merchantName);
 
     if (!success) {
       return { error: "Failed to delete merchant mapping" };
