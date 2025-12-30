@@ -2,8 +2,8 @@ import { z } from "zod";
 
 // Category schemas and types
 export const categorySchema = z.object({
-  id: z.string().uuid(),
-  user_id: z.string().uuid(),
+  id: z.string().min(1),
+  user_id: z.string().min(1),
   name: z.string().min(1).max(50),
   description: z.string().nullable(),
   is_default: z.boolean(),

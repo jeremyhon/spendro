@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -49,7 +50,11 @@ export function EditExpenseDialog({
   const [open, setOpen] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [showBulkUpdateOption, setShowBulkUpdateOption] = useState(false);
-  const { categories } = useCategories();
+  const {
+    categories,
+    isLoading: categoriesLoading,
+    error: categoriesError,
+  } = useCategories();
   const [applyToAllMerchant, setApplyToAllMerchant] = useState(false);
   const [formData, setFormData] = useState<ExpenseFormData>({
     description: expense.description,
@@ -131,7 +136,7 @@ export function EditExpenseDialog({
         if (!isOpen) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-150">
         <DialogHeader>
           <DialogTitle>Edit Expense</DialogTitle>
         </DialogHeader>
@@ -173,14 +178,37 @@ export function EditExpenseDialog({
               }
             >
               <SelectTrigger className="col-span-3">
-                <SelectValue placeholder="Select a category" />
+                <SelectValue
+                  placeholder={
+                    categoriesLoading
+                      ? "Loading categories..."
+                      : "Select a category"
+                  }
+                />
+                {categoriesLoading && (
+                  <Loader2 className="ml-2 h-4 w-4 animate-spin text-muted-foreground" />
+                )}
               </SelectTrigger>
               <SelectContent>
-                {categories.map((category) => (
-                  <SelectItem key={category.id} value={category.name}>
-                    {category.name}
+                {categoriesLoading ? (
+                  <SelectItem value="__loading__" disabled>
+                    Loading categories...
                   </SelectItem>
-                ))}
+                ) : categoriesError ? (
+                  <SelectItem value="__error__" disabled>
+                    Failed to load categories
+                  </SelectItem>
+                ) : categories.length === 0 ? (
+                  <SelectItem value="__empty__" disabled>
+                    No categories found
+                  </SelectItem>
+                ) : (
+                  categories.map((category) => (
+                    <SelectItem key={category.id} value={category.name}>
+                      {category.name}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>

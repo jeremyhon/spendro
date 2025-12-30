@@ -3,19 +3,21 @@ import { z } from "zod";
 
 export const env = createEnv({
   server: {
-    ELECTRIC_SOURCE_ID: z.string().min(1),
-    ELECTRIC_SOURCE_SECRET: z.string().min(1),
+    SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+    SUPABASE_STORAGE_BUCKET: z.string().min(1).optional(),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
     NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+    NEXT_PUBLIC_POCKETBASE_URL: z.string().url().optional(),
   },
   runtimeEnv: {
-    // Server-side ElectricSQL credentials
-    ELECTRIC_SOURCE_ID: process.env.ELECTRIC_SOURCE_ID,
-    ELECTRIC_SOURCE_SECRET: process.env.ELECTRIC_SOURCE_SECRET,
+    // Server-side Supabase storage credentials
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    SUPABASE_STORAGE_BUCKET: process.env.SUPABASE_STORAGE_BUCKET,
     // Client-side Supabase configuration
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    NEXT_PUBLIC_POCKETBASE_URL: process.env.NEXT_PUBLIC_POCKETBASE_URL,
   },
 });

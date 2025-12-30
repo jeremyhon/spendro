@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { getPocketbaseServerAuth } from "@/lib/pocketbase/server";
 import type { UploadResult } from "@/lib/types/expense";
 import { processPdfExpenses } from "@/lib/utils/expense-processor";
 import {
   checkDuplicateStatement,
   createStatementRecord,
-  uploadToBlob,
+  uploadToStorage,
   validateUploadedFile,
 } from "@/lib/utils/file-handler";
 
@@ -17,12 +17,9 @@ import {
 export async function uploadStatement(
   formData: FormData
 ): Promise<UploadResult> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { userId } = await getPocketbaseServerAuth();
 
-  if (!user) {
+  if (!userId) {
     return { success: false, message: "Not authenticated" };
   }
 
@@ -53,7 +50,7 @@ export async function uploadStatement(
   try {
     // Check for duplicate statements (controlled by environment variable)
     if (!disableDuplicateDetection) {
-      const isDuplicate = await checkDuplicateStatement(user.id, checksum);
+      const isDuplicate = await checkDuplicateStatement(userId, checksum);
       if (isDuplicate) {
         return {
           success: false,
@@ -62,19 +59,19 @@ export async function uploadStatement(
       }
     }
 
-    // Upload file to blob storage
-    const { url: blobUrl } = await uploadToBlob(file);
+    // Upload file to Supabase Storage
+    const { url: blobUrl } = await uploadToStorage(file, userId);
 
     // Create statement record
     const { id: statementId } = await createStatementRecord(
-      user.id,
+      userId,
       checksum,
       blobUrl,
       file.name
     );
 
     // Process PDF asynchronously
-    processPdfExpenses(fileBuffer, statementId, user.id).catch((error) => {
+    processPdfExpenses(fileBuffer, statementId, userId).catch((error) => {
       console.error(
         `Async processing failed for statement ${statementId}:`,
         error

@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { electricClient } from "@/lib/electric/client";
-import { SHAPE_REGISTRY } from "@/lib/electric/shapes";
+import { pocketbase } from "@/lib/pocketbase/client";
 import {
-  electricStatementStatusSchema,
+  type StatementStatus,
   type StatementStatusData,
   transformDatabaseToStatusDisplay,
 } from "@/lib/types/statement";
@@ -22,8 +21,31 @@ interface UseStatementStatusReturn {
   refetch: () => void;
 }
 
+type PocketbaseStatementRecord = {
+  id: string;
+  file_name: string;
+  status: StatementStatus;
+  updated_at?: string | null;
+  updated?: string;
+};
+
+function escapeFilter(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function toStatusDisplay(
+  record: PocketbaseStatementRecord
+): StatementStatusData {
+  return transformDatabaseToStatusDisplay({
+    id: record.id,
+    file_name: record.file_name,
+    status: record.status,
+    updated_at: record.updated_at ?? record.updated ?? new Date().toISOString(),
+  });
+}
+
 /**
- * Hook for tracking statement status changes in real-time using Electric SQL
+ * Hook for tracking statement status changes in real-time using PocketBase
  * Optimized for upload status tracking with minimal data transfer
  */
 export function useStatementStatus(
@@ -36,52 +58,37 @@ export function useStatementStatus(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refetch = useCallback(() => {
+  const fetchStatements = useCallback(async () => {
     if (!user?.id) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      // Get native Electric SQL parameters
-      // Note: user_id filtering is handled automatically by the proxy
-      const shapeParams = SHAPE_REGISTRY.statementStatus(statementIds);
+      const filter = statementIds?.length
+        ? statementIds.map((id) => `id = "${escapeFilter(id)}"`).join(" || ")
+        : undefined;
 
-      // Create Electric SQL shape using native interface
-      const shape = electricClient.createShape(shapeParams);
+      const records = await pocketbase
+        .collection("statements")
+        .getFullList<PocketbaseStatementRecord>({
+          filter,
+          sort: "-updated_at",
+        });
 
-      // Subscribe to shape changes
-      const unsubscribe = shape.subscribe(({ rows }) => {
-        try {
-          // Validate and transform the data
-          const validatedStatements = rows
-            .map((row: Record<string, unknown>) => {
-              const validatedRow = electricStatementStatusSchema.parse(row);
-              return transformDatabaseToStatusDisplay(validatedRow);
-            })
-            .filter(
-              (statement): statement is StatementStatusData =>
-                statement !== null
-            );
-
-          setStatements(validatedStatements);
-          setError(null);
-        } catch (err) {
-          console.error("Error processing statement status data:", err);
-          setError("Failed to process statement data");
-        } finally {
-          setLoading(false);
-        }
-      });
-
-      return unsubscribe;
+      const nextStatements = records.map(toStatusDisplay);
+      setStatements(nextStatements);
     } catch (err) {
-      console.error("Error setting up statement status subscription:", err);
-      setError("Failed to connect to statement status updates");
+      console.error("Error fetching statement status data:", err);
+      setError("Failed to load statement status data");
+    } finally {
       setLoading(false);
-      return () => {};
     }
-  }, [user?.id, statementIds]);
+  }, [statementIds, user?.id]);
+
+  const refetch = useCallback(() => {
+    void fetchStatements();
+  }, [fetchStatements]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -98,14 +105,52 @@ export function useStatementStatus(
       return;
     }
 
-    const unsubscribe = refetch();
+    void fetchStatements();
+
+    let unsubscribe: (() => void) | null = null;
+
+    pocketbase
+      .collection("statements")
+      .subscribe("*", (event) => {
+        if (statementIds?.length && !statementIds.includes(event.record.id)) {
+          return;
+        }
+
+        if (event.action === "delete") {
+          setStatements((prev) =>
+            prev.filter((item) => item.id !== event.record.id)
+          );
+          return;
+        }
+
+        const next = toStatusDisplay(
+          event.record as unknown as PocketbaseStatementRecord
+        );
+        setStatements((prev) => {
+          const updated = prev.filter((item) => item.id !== next.id);
+          const merged = [next, ...updated];
+          return merged.sort(
+            (a, b) =>
+              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          );
+        });
+      })
+      .then((handler) => {
+        unsubscribe = handler;
+      })
+      .catch((err) => {
+        console.error("Error subscribing to statement status:", err);
+        setError("Failed to connect to statement status updates");
+      });
 
     return () => {
-      if (typeof unsubscribe === "function") {
+      if (unsubscribe) {
         unsubscribe();
+      } else {
+        pocketbase.collection("statements").unsubscribe("*");
       }
     };
-  }, [user?.id, authLoading, autoSubscribe, refetch]);
+  }, [authLoading, autoSubscribe, fetchStatements, statementIds, user?.id]);
 
   return {
     statements,

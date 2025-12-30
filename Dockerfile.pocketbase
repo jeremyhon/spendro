@@ -1,0 +1,13 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata
+
+WORKDIR /pb
+
+COPY ./.pocketbase/bin/pocketbase /pb/pocketbase
+RUN chmod +x /pb/pocketbase
+
+ENV PORT=8080
+EXPOSE 8080
+
+CMD ["sh", "-c", "/pb/pocketbase serve --http=0.0.0.0:${PORT} --dir /pb/pb_data ${POCKETBASE_ORIGINS:+--origins ${POCKETBASE_ORIGINS}}"]

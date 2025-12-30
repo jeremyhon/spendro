@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
-import { put } from "@vercel/blob";
-import { createClient } from "@/lib/supabase/server";
+import { createClient } from "@supabase/supabase-js";
+import { env } from "@/lib/env";
+import { createPocketbaseServerClient } from "@/lib/pocketbase/server";
 
 /**
  * Validation result for uploaded files
@@ -63,15 +64,85 @@ export async function validateUploadedFile(
 }
 
 /**
- * Upload file to Vercel Blob storage
+ * Upload file to Supabase Storage
  */
-export async function uploadToBlob(file: File): Promise<{ url: string }> {
-  const blob = await put(file.name, file, {
-    access: "public",
-    addRandomSuffix: true,
-  });
+const supabase = createClient(
+  env.NEXT_PUBLIC_SUPABASE_URL,
+  env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
 
-  return { url: blob.url };
+const STORAGE_BUCKET = env.SUPABASE_STORAGE_BUCKET ?? "statements";
+let bucketReady = false;
+let bucketPromise: Promise<void> | null = null;
+
+async function ensureBucketExists() {
+  if (bucketReady) return;
+  if (bucketPromise) {
+    await bucketPromise;
+    return;
+  }
+
+  bucketPromise = (async () => {
+    const { data, error } = await supabase.storage.getBucket(STORAGE_BUCKET);
+    const status = (error as { status?: number } | null)?.status;
+    if (error && status !== 404) {
+      throw error;
+    }
+
+    if (!data) {
+      const { error: createError } = await supabase.storage.createBucket(
+        STORAGE_BUCKET,
+        {
+          public: true,
+        }
+      );
+      const createStatus = (createError as { status?: number } | null)?.status;
+      if (createError && createStatus !== 409) {
+        throw createError;
+      }
+    }
+
+    bucketReady = true;
+  })();
+
+  await bucketPromise;
+}
+
+function safeFilename(filename: string) {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+export async function uploadToStorage(
+  file: File,
+  userId: string
+): Promise<{ url: string }> {
+  await ensureBucketExists();
+
+  const suffix = crypto.randomUUID();
+  const objectPath = `${userId}/${suffix}-${safeFilename(file.name)}`;
+
+  const { error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .upload(objectPath, file, {
+      contentType: file.type,
+      upsert: false,
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  const { data } = supabase.storage
+    .from(STORAGE_BUCKET)
+    .getPublicUrl(objectPath);
+
+  return { url: data.publicUrl };
 }
 
 /**
@@ -83,23 +154,15 @@ export async function createStatementRecord(
   blobUrl: string,
   fileName: string
 ): Promise<{ id: string }> {
-  const supabase = await createClient();
+  const pb = await createPocketbaseServerClient();
 
-  const { data: statement, error } = await supabase
-    .from("statements")
-    .insert({
-      user_id: userId,
-      checksum: checksum,
-      blob_url: blobUrl,
-      file_name: fileName,
-      status: "processing",
-    })
-    .select()
-    .single();
-
-  if (error) {
-    throw new Error(`Failed to create statement record: ${error.message}`);
-  }
+  const statement = await pb.collection("statements").create<{ id: string }>({
+    user_id: userId,
+    checksum: checksum,
+    blob_url: blobUrl,
+    file_name: fileName,
+    status: "processing",
+  });
 
   return { id: statement.id };
 }
@@ -111,13 +174,11 @@ export async function checkDuplicateStatement(
   userId: string,
   checksum: string
 ): Promise<boolean> {
-  const supabase = await createClient();
-  const { data: existingStatement } = await supabase
-    .from("statements")
-    .select("id")
-    .eq("checksum", checksum)
-    .eq("user_id", userId)
-    .single();
+  const pb = await createPocketbaseServerClient();
+  const safeChecksum = checksum.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const result = await pb.collection("statements").getList(1, 1, {
+    filter: `user_id = "${userId}" && checksum = "${safeChecksum}"`,
+  });
 
-  return !!existingStatement;
+  return result.totalItems > 0;
 }

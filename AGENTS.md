@@ -3,12 +3,12 @@
 ## Project Structure & Module Organization
 - `app/`: Next.js App Router pages, layouts, and route handlers.
 - `components/`: reusable UI components (shadcn/ui + custom).
-- `hooks/`: React hooks (notably ElectricSQL data hooks).
-- `lib/`: shared utilities, Supabase/ElectricSQL clients, env validation.
+- `hooks/`: React hooks (notably PocketBase data hooks).
+- `lib/`: shared utilities, PocketBase client, Supabase Storage client, env validation.
 - `scripts/`: dev and database helper scripts.
 - `styles/` and `app/globals.css`: global styling and Tailwind setup.
 - `public/`: static assets.
-- `supabase/`: database migrations and configuration.
+- `supabase/`: legacy migrations/config (kept for reference and data export).
 
 ## Build, Test, and Development Commands
 - `bun run dev`: start the Next.js dev server (Turbopack) and log to `dev.log`.
@@ -17,7 +17,7 @@
 - `bun run check`: Biome lint/format + `tsc --noEmit`.
 - `bun run ci`: `check` + `build` for CI.
 - `bun test`: run Bun’s test runner.
-- `bun run reset`: reset local DB and blob storage (see `scripts/reset-db.ts`).
+- `bun run reset`: reset local DB and storage (if present in your branch).
 
 ## Coding Style & Naming Conventions
 - TypeScript + React with 2-space indentation, double quotes, semicolons, 80-char line width.
@@ -38,7 +38,8 @@
 ## Configuration & Security Notes
 - Required environment variables are defined in `lib/env.ts`.
 - Use `.env.local` for local development; do not commit secrets.
-- Supabase CLI and ElectricSQL credentials are required for DB sync features.
+- PocketBase is the primary DB/auth; Supabase is used for Storage uploads.
+- Relevant vars include `NEXT_PUBLIC_POCKETBASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and optional `SUPABASE_STORAGE_BUCKET`.
 
 ## Agent-Specific Instructions
 - Do not start or stop the dev server; it is managed externally.

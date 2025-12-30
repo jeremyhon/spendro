@@ -12,7 +12,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Slider } from "@/components/ui/slider";
-import type { ExpenseFilters } from "@/hooks/use-electric-expenses";
+import type { ExpenseFilters } from "@/hooks/use-expenses";
 import { EXPENSE_CATEGORIES } from "@/lib/types/expense";
 
 interface ExpenseColumnFiltersProps {

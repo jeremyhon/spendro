@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createPocketbaseServerClient } from "@/lib/pocketbase/server";
 import type {
   MerchantMapping,
   MerchantMappingInsert,
@@ -11,20 +11,15 @@ export async function getMerchantMapping(
   userId: string,
   merchantName: string
 ): Promise<MerchantMapping | null> {
-  const supabase = await createClient();
+  const pb = await createPocketbaseServerClient();
+  const normalized = merchantName.toUpperCase();
+  const list = await pb
+    .collection("merchant_mappings")
+    .getList<MerchantMapping>(1, 1, {
+      filter: `user_id = "${userId}" && merchant_name = "${normalized}"`,
+    });
 
-  const { data, error } = await supabase
-    .from("merchant_mappings")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("merchant_name", merchantName.toUpperCase())
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return data;
+  return list.items?.[0] ?? null;
 }
 
 /**
@@ -36,25 +31,22 @@ export async function createMerchantMapping(
   merchantName: string,
   category: string
 ): Promise<boolean> {
-  const supabase = await createClient();
-
   const mappingData: MerchantMappingInsert = {
     user_id: userId,
     merchant_name: merchantName.toUpperCase(),
     category,
   };
 
-  const { error } = await supabase
-    .from("merchant_mappings")
-    .insert([mappingData]);
-
-  // If it's a duplicate key error, return false (ignore)
-  if (error?.code === "23505") {
-    return false;
-  }
-
-  if (error) {
-    console.error("Error creating merchant mapping:", error);
+  const pb = await createPocketbaseServerClient();
+  try {
+    await pb.collection("merchant_mappings").create(mappingData);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to create mapping";
+    if (message.toLowerCase().includes("unique")) {
+      return false;
+    }
+    console.error("Error creating merchant mapping:", message);
     return false;
   }
 
@@ -69,9 +61,6 @@ export async function updateAllExpensesByMerchant(
   merchantName: string,
   newCategory: string
 ): Promise<{ success: boolean; updatedCount: number }> {
-  const supabase = await createClient();
-
-  // Import category helper at the top of the file (need to add this import)
   const { getOrCreateCategoryByName } = await import(
     "@/app/actions/categories"
   );
@@ -79,22 +68,26 @@ export async function updateAllExpensesByMerchant(
   // Get category ID for the new category
   const categoryId = await getOrCreateCategoryByName(newCategory, userId);
 
-  const { data, error } = await supabase
-    .from("expenses")
-    .update({
-      category: newCategory, // Keep for backward compatibility
-      category_id: categoryId,
-    })
-    .eq("user_id", userId)
-    .ilike("merchant", merchantName) // Case-insensitive match
-    .select("id");
+  const pb = await createPocketbaseServerClient();
+  const expenses = await pb.collection("expenses").getFullList({
+    filter: `user_id = "${userId}"`,
+  });
 
-  if (error) {
-    console.error("Error updating expenses by merchant:", error);
-    return { success: false, updatedCount: 0 };
+  const matches = expenses.filter((expense) =>
+    String(expense.merchant ?? "")
+      .toLowerCase()
+      .includes(merchantName.toLowerCase())
+  );
+
+  for (const expense of matches) {
+    await pb.collection("expenses").update(expense.id, {
+      category: newCategory,
+      category_id: categoryId,
+      category_text: newCategory,
+    });
   }
 
-  return { success: true, updatedCount: data?.length || 0 };
+  return { success: true, updatedCount: matches.length };
 }
 
 /**
@@ -103,18 +96,14 @@ export async function updateAllExpensesByMerchant(
 export async function listUserMerchantMappings(
   userId: string
 ): Promise<MerchantMapping[]> {
-  const supabase = await createClient();
+  const pb = await createPocketbaseServerClient();
 
-  const { data, error } = await supabase
-    .from("merchant_mappings")
-    .select("*")
-    .eq("user_id", userId)
-    .order("merchant_name", { ascending: true });
-
-  if (error) {
-    console.error("Error fetching merchant mappings:", error);
-    return [];
-  }
+  const data = await pb
+    .collection("merchant_mappings")
+    .getFullList<MerchantMapping>({
+      filter: `user_id = "${userId}"`,
+      sort: "merchant_name",
+    });
 
   return data || [];
 }
@@ -126,18 +115,15 @@ export async function deleteMerchantMapping(
   userId: string,
   merchantName: string
 ): Promise<boolean> {
-  const supabase = await createClient();
+  const pb = await createPocketbaseServerClient();
+  const normalized = merchantName.toUpperCase();
+  const list = await pb.collection("merchant_mappings").getList(1, 1, {
+    filter: `user_id = "${userId}" && merchant_name = "${normalized}"`,
+  });
+  const record = list.items?.[0];
+  if (!record) return false;
 
-  const { error } = await supabase
-    .from("merchant_mappings")
-    .delete()
-    .eq("user_id", userId)
-    .eq("merchant_name", merchantName.toUpperCase());
-
-  if (error) {
-    console.error("Error deleting merchant mapping:", error);
-    return false;
-  }
+  await pb.collection("merchant_mappings").delete(record.id);
 
   return true;
 }
@@ -150,18 +136,17 @@ export async function updateMerchantMapping(
   merchantName: string,
   newCategory: string
 ): Promise<boolean> {
-  const supabase = await createClient();
+  const pb = await createPocketbaseServerClient();
+  const normalized = merchantName.toUpperCase();
+  const list = await pb.collection("merchant_mappings").getList(1, 1, {
+    filter: `user_id = "${userId}" && merchant_name = "${normalized}"`,
+  });
+  const record = list.items?.[0];
+  if (!record) return false;
 
-  const { error } = await supabase
-    .from("merchant_mappings")
-    .update({ category: newCategory })
-    .eq("user_id", userId)
-    .eq("merchant_name", merchantName.toUpperCase());
-
-  if (error) {
-    console.error("Error updating merchant mapping:", error);
-    return false;
-  }
+  await pb.collection("merchant_mappings").update(record.id, {
+    category: newCategory,
+  });
 
   return true;
 }

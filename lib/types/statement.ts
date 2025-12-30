@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 // Statement status enum
 export type StatementStatus = "processing" | "completed" | "failed";
 
@@ -33,21 +31,6 @@ export interface Statement {
   periodEnd: string | null;
 }
 
-// Schema for validating Electric SQL statement data
-export const electricStatementSchema = z.object({
-  id: z.string().uuid(),
-  user_id: z.string().uuid(),
-  created_at: z.string(),
-  updated_at: z.string(),
-  checksum: z.string(),
-  file_name: z.string(),
-  status: z.enum(["processing", "completed", "failed"]),
-  blob_url: z.string().url(),
-  bank_name: z.string().nullable(),
-  period_start: z.string().nullable(),
-  period_end: z.string().nullable(),
-});
-
 // Transform database format to display format
 export function transformDatabaseToDisplay(
   statement: DatabaseStatement
@@ -74,13 +57,6 @@ export interface StatementStatusData {
   status: StatementStatus;
   updatedAt: string;
 }
-
-export const electricStatementStatusSchema = z.object({
-  id: z.string().uuid(),
-  file_name: z.string(),
-  status: z.enum(["processing", "completed", "failed"]),
-  updated_at: z.string(),
-});
 
 export function transformDatabaseToStatusDisplay(statement: {
   id: string;

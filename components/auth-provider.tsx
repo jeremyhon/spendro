@@ -1,18 +1,34 @@
 "use client";
 
-import type { AuthResponse, User } from "@supabase/supabase-js";
+import type { RecordModel } from "pocketbase";
 import type React from "react";
 import { createContext, useContext, useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { pocketbase } from "@/lib/pocketbase/client";
 
 interface AuthContextType {
-  user: User | null;
+  user: RecordModel | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<AuthResponse>;
+  signIn: (
+    email: string,
+    password: string
+  ) => Promise<{ data?: { user: RecordModel }; error?: AuthError }>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+type AuthError = { message: string; status?: number };
+
+const COOKIE_OPTIONS = {
+  httpOnly: false,
+  secure: false,
+  sameSite: "lax",
+} as const;
+
+function syncPocketbaseCookie() {
+  // biome-ignore lint/suspicious/noDocumentCookie: PocketBase SDK cookie sync.
+  document.cookie = pocketbase.authStore.exportToCookie(COOKIE_OPTIONS);
+}
 
 export function useAuth() {
   const context = useContext(AuthContext);
@@ -23,54 +39,40 @@ export function useAuth() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<RecordModel | null>(null);
   const [loading, setLoading] = useState(true);
-  const supabase = createClient();
 
   useEffect(() => {
-    const getSession = async () => {
-      try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession();
+    setUser(pocketbase.authStore.record ?? null);
+    setLoading(false);
 
-        if (error) {
-          console.error("Error getting session:", error);
-        }
-
-        setUser(session?.user ?? null);
-      } catch (error) {
-        console.error("Session error:", error);
-        setUser(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    getSession();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      setUser(session?.user ?? null);
+    const removeListener = pocketbase.authStore.onChange((_token, model) => {
+      setUser(model ?? null);
       setLoading(false);
-    });
+      syncPocketbaseCookie();
+    }, true);
 
-    return () => subscription.unsubscribe();
-  }, [supabase.auth]);
+    return () => removeListener();
+  }, []);
 
   const signIn = async (email: string, password: string) => {
-    const result = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return result;
+    try {
+      const auth = await pocketbase
+        .collection("users")
+        .authWithPassword(email, password);
+      syncPocketbaseCookie();
+      return { data: { user: auth.record } };
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to sign in";
+      return { error: { message } };
+    }
   };
 
   const signOut = async () => {
     try {
-      await supabase.auth.signOut();
+      pocketbase.authStore.clear();
+      syncPocketbaseCookie();
     } catch (error) {
       console.error("Sign out error:", error);
     }

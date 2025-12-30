@@ -1,6 +1,6 @@
 "use client";
 
-import { createClient } from "@/lib/supabase/client";
+import { pocketbase } from "@/lib/pocketbase/client";
 import type { MerchantMapping } from "@/lib/types/expense";
 
 /**
@@ -9,19 +9,14 @@ import type { MerchantMapping } from "@/lib/types/expense";
 export async function getMerchantMappingClient(
   merchantName: string
 ): Promise<MerchantMapping | null> {
-  const supabase = createClient();
+  const normalized = merchantName.toUpperCase();
+  const list = await pocketbase
+    .collection("merchant_mappings")
+    .getList<MerchantMapping>(1, 1, {
+      filter: `merchant_name = "${normalized}"`,
+    });
 
-  const { data, error } = await supabase
-    .from("merchant_mappings")
-    .select("*")
-    .eq("merchant_name", merchantName.toUpperCase())
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return data;
+  return list.items?.[0] ?? null;
 }
 
 /**
@@ -31,18 +26,12 @@ export async function getMerchantCategoryMappingClient(
   merchantName: string,
   category: string
 ): Promise<MerchantMapping | null> {
-  const supabase = createClient();
+  const normalized = merchantName.toUpperCase();
+  const list = await pocketbase
+    .collection("merchant_mappings")
+    .getList<MerchantMapping>(1, 1, {
+      filter: `merchant_name = "${normalized}" && category = "${category}"`,
+    });
 
-  const { data, error } = await supabase
-    .from("merchant_mappings")
-    .select("*")
-    .eq("merchant_name", merchantName.toUpperCase())
-    .eq("category", category)
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return data;
+  return list.items?.[0] ?? null;
 }
