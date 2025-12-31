@@ -3,6 +3,7 @@ import type {
   DisplayExpense,
   DisplayExpenseWithDuplicate,
 } from "@/lib/types/expense";
+import { normalizeDateString } from "@/lib/utils/temporal-dates";
 
 /**
  * Transform a database expense row to display format
@@ -25,7 +26,7 @@ export function transformDatabaseToDisplay(
     isDuplicate,
   };
 
-  if (dbExpense.date) result.date = dbExpense.date;
+  if (dbExpense.date) result.date = normalizeDateString(dbExpense.date);
   if (dbExpense.description) result.description = dbExpense.description;
   if (dbExpense.merchant !== undefined)
     result.merchant = dbExpense.merchant || "";

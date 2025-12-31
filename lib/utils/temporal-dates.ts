@@ -50,6 +50,15 @@ export function plainDateToString(date: Temporal.PlainDate): string {
 }
 
 /**
+ * Normalizes a date-like string into YYYY-MM-DD when possible.
+ * Falls back to the original string if parsing fails.
+ */
+export function normalizeDateString(dateStr: string): string {
+  const parsed = plainDateFromString(dateStr);
+  return parsed ? parsed.toString() : dateStr;
+}
+
+/**
  * Creates a date range from two YYYY-MM-DD strings
  * Returns null if either date is invalid or from > to
  */

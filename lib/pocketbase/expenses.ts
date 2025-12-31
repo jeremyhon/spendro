@@ -6,6 +6,7 @@ import {
   type DatabaseExpenseRow,
   databaseExpenseRowSchema,
 } from "@/lib/types/expense";
+import { normalizeDateString } from "@/lib/utils/temporal-dates";
 
 export const POCKETBASE_EXPENSES_QUERY_KEY = ["pocketbase", "expenses"];
 
@@ -71,7 +72,7 @@ function parsePocketbaseExpense(
       user_id: userId,
       statement_id: record.expand?.statement_id?.id ?? statementId,
       created_at: record.created_at ?? record.created,
-      date: record.date,
+      date: normalizeDateString(record.date),
       description: record.description,
       amount_sgd: record.amount_sgd,
       currency: record.currency ?? "SGD",

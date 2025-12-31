@@ -9,6 +9,7 @@ import {
   displayExpenseSchema,
   expenseInsertDataSchema,
 } from "@/lib/types/expense";
+import { normalizeDateString } from "@/lib/utils/temporal-dates";
 
 /**
  * Transform database row to display format with validation
@@ -20,7 +21,7 @@ export function transformDbRowToDisplay(row: unknown): DisplayExpense {
   // Transform to display format
   const displayData = {
     id: validatedRow.id,
-    date: validatedRow.date,
+    date: normalizeDateString(validatedRow.date),
     description: validatedRow.description,
     merchant: validatedRow.merchant || "",
     category: validatedRow.category,
