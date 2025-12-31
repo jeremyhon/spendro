@@ -1,6 +1,13 @@
 "use client";
 
-import { LogOut, MapPin, Package2, Receipt, Tags } from "lucide-react";
+import {
+  LogOut,
+  MapPin,
+  Package2,
+  Receipt,
+  Sparkles,
+  Tags,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
@@ -79,6 +86,21 @@ export function TopNavigation() {
                   >
                     <Tags className="mr-2 h-4 w-4" />
                     Categories
+                  </Link>
+                </NavigationMenuLink>
+              </NavigationMenuItem>
+              <NavigationMenuItem>
+                <NavigationMenuLink asChild>
+                  <Link
+                    href="/ingestion"
+                    className={cn(
+                      "group inline-flex h-9 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[active]:bg-accent/50 data-[state=open]:bg-accent/50",
+                      isActive("/ingestion") &&
+                        "bg-accent text-accent-foreground"
+                    )}
+                  >
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Ingestion
                   </Link>
                 </NavigationMenuLink>
               </NavigationMenuItem>
