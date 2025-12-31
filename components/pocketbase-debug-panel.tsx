@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePocketbaseAuth } from "@/hooks/use-pocketbase-auth";
 import { usePocketbaseExpenses } from "@/hooks/use-pocketbase-expenses";
 import { pocketbase } from "@/lib/pocketbase/client";
@@ -22,15 +22,6 @@ export function PocketbaseDebugPanel() {
   } = usePocketbaseExpenses({ enabled: isValid });
 
   const userEmail = (user as { email?: string } | null)?.email ?? "unknown";
-  const userId = (user as { id?: string } | null)?.id ?? "unknown";
-
-  useEffect(() => {
-    console.debug("[PB auth] baseUrl:", pocketbase.baseUrl);
-  }, []);
-
-  useEffect(() => {
-    console.debug("[PB auth] state:", { isValid, userId, userEmail });
-  }, [isValid, userId, userEmail]);
 
   const visibleExpenses = useMemo(() => {
     if (showAllExpenses) return expenses;

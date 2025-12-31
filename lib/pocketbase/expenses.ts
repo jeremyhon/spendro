@@ -83,8 +83,7 @@ function parsePocketbaseExpense(
       category: categoryName,
       line_hash: record.line_hash,
     });
-  } catch (error) {
-    console.warn("Invalid PocketBase expense row:", record, error);
+  } catch (_error) {
     return null;
   }
 }

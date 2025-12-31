@@ -41,24 +41,6 @@ export function usePocketbaseExpenses(
   );
 
   useEffect(() => {
-    console.debug("[PB expenses] enabled:", enabled);
-  }, [enabled]);
-
-  useEffect(() => {
-    console.debug("[PB expenses] status:", {
-      status: liveQuery.status,
-      isLoading: liveQuery.isLoading,
-      isReady: liveQuery.isReady,
-      isError: liveQuery.isError,
-    });
-  }, [
-    liveQuery.status,
-    liveQuery.isLoading,
-    liveQuery.isReady,
-    liveQuery.isError,
-  ]);
-
-  useEffect(() => {
     if (!enabled || !pocketbase.authStore.isValid) {
       setSubscriptionError(null);
       return undefined;
@@ -75,7 +57,6 @@ export function usePocketbaseExpenses(
 
     const subscribe = async () => {
       try {
-        console.debug("[PB expenses] subscribing to SSE");
         await pocketbase.collection("expenses").subscribe(
           "*",
           (event) => {
@@ -96,7 +77,6 @@ export function usePocketbaseExpenses(
           }
         );
         setSubscriptionError(null);
-        console.debug("[PB expenses] SSE subscription active");
       } catch (error) {
         if (!active) return;
         const message =
@@ -104,7 +84,6 @@ export function usePocketbaseExpenses(
             ? error.message
             : "Failed to subscribe to PocketBase";
         setSubscriptionError(message);
-        console.debug("[PB expenses] SSE subscription failed:", message);
       }
     };
 
@@ -112,7 +91,6 @@ export function usePocketbaseExpenses(
 
     return () => {
       active = false;
-      console.debug("[PB expenses] unsubscribing from SSE");
       pocketbase.collection("expenses").unsubscribe("*");
     };
   }, [enabled]);
@@ -121,14 +99,6 @@ export function usePocketbaseExpenses(
     if (!enabled) return [];
     return liveQuery.data ?? [];
   }, [enabled, liveQuery.data]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    console.debug("[PB expenses] rows:", {
-      total: expenses.length,
-      sample: expenses[0],
-    });
-  }, [enabled, expenses]);
 
   return {
     expenses,

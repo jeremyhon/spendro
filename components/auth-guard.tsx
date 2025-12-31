@@ -32,8 +32,6 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     const email = formData.get("email") as string;
     const password = formData.get("password") as string;
 
-    console.log("Attempting to sign in with:", email);
-
     const { data, error } = await signIn(email, password);
 
     if (error) {
