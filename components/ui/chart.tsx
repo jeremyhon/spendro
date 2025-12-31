@@ -23,6 +23,7 @@ type ChartContextProps = {
 };
 
 const ChartContext = React.createContext<ChartContextProps | null>(null);
+const DEFAULT_INITIAL_DIMENSION = { width: 1, height: 1 };
 
 function useChart() {
   const context = React.useContext(ChartContext);
@@ -58,7 +59,9 @@ const ChartContainer = React.forwardRef<
         {...props}
       >
         <ChartStyle id={chartId} config={config} />
-        <RechartsPrimitive.ResponsiveContainer>
+        <RechartsPrimitive.ResponsiveContainer
+          initialDimension={DEFAULT_INITIAL_DIMENSION}
+        >
           {children}
         </RechartsPrimitive.ResponsiveContainer>
       </div>
