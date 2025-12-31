@@ -58,6 +58,10 @@ export function DateRangePickerWithPresets({
       label: "Last 6 months",
       getValue: () => plainDateRangeToDateRange(getLastNMonths(6)),
     },
+    {
+      label: "Last 12 months",
+      getValue: () => plainDateRangeToDateRange(getLastNMonths(12)),
+    },
   ];
 
   const applyRange = (newRange: DateRange | undefined) => {
