@@ -52,5 +52,4 @@
   - `POCKETBASE_URL` (optional, defaults to `NEXT_PUBLIC_POCKETBASE_URL`).
 
 ## Agent-Specific Instructions
-- Do not start or stop the dev server; it is managed externally.
 - Check logs in `dev.log` when debugging dev server output.
