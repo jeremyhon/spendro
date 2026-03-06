@@ -1,15 +1,9 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Temporal } from "temporal-polyfill";
-import { useAuth } from "@/components/auth-provider";
-import { usePocketbaseExpenses } from "@/hooks/use-pocketbase-expenses";
-import {
-  POCKETBASE_EXPENSES_QUERY_KEY,
-  pocketbaseQueryClient,
-} from "@/lib/pocketbase/expenses";
+import { getExpenses } from "@/app/actions/expense";
 import type { DisplayExpenseWithDuplicate } from "@/lib/types/expense";
-import { transformDatabaseRowsToDisplay } from "@/lib/utils/display-transformers";
 import {
   createDateRange,
   plainDateFromString,
@@ -47,23 +41,48 @@ interface UseExpensesReturn {
   filteredCount: number;
 }
 
-/**
- * Hook for managing expenses with PocketBase sync
- * Applies filter logic client-side after fetching the user's expense list
- */
 export function useExpenses(
   options: UseExpensesOptions = {}
 ): UseExpensesReturn {
   const { filters, autoSubscribe = true, monthsBack = 6 } = options;
-  const { user, loading: authLoading } = useAuth();
 
-  const {
-    expenses: dbExpenses,
-    loading,
-    error,
-  } = usePocketbaseExpenses({
-    enabled: Boolean(user?.id) && autoSubscribe,
-  });
+  const [expenses, setExpenses] = useState<DisplayExpenseWithDuplicate[]>([]);
+  const [loading, setLoading] = useState(autoSubscribe);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchExpenses = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await getExpenses();
+      if (result.error) {
+        setError(result.error);
+        setExpenses([]);
+        return;
+      }
+
+      setExpenses(result.expenses || []);
+    } catch (fetchError) {
+      const message =
+        fetchError instanceof Error
+          ? fetchError.message
+          : "Failed to fetch expenses";
+      setError(message);
+      setExpenses([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!autoSubscribe) {
+      setLoading(false);
+      return;
+    }
+
+    void fetchExpenses();
+  }, [autoSubscribe, fetchExpenses]);
 
   const defaultDateRange = useMemo(() => {
     const end = Temporal.Now.plainDateISO();
@@ -86,9 +105,7 @@ export function useExpenses(
   }, [defaultDateRange, filters?.dateRange?.end, filters?.dateRange?.start]);
 
   const baseFilteredRows = useMemo(() => {
-    if (!user?.id || !autoSubscribe) return [];
-
-    return dbExpenses.filter((expense) => {
+    return expenses.filter((expense) => {
       if (dateRange) {
         const expenseDate = plainDateFromString(expense.date);
         if (!expenseDate) return false;
@@ -115,8 +132,8 @@ export function useExpenses(
 
       if (filters?.amountRange) {
         if (
-          expense.amount_sgd < filters.amountRange.min ||
-          expense.amount_sgd > filters.amountRange.max
+          expense.amount < filters.amountRange.min ||
+          expense.amount > filters.amountRange.max
         ) {
           return false;
         }
@@ -125,28 +142,21 @@ export function useExpenses(
       return true;
     });
   }, [
-    autoSubscribe,
-    dbExpenses,
     dateRange,
+    expenses,
     filters?.amountRange?.max,
     filters?.amountRange?.min,
     filters?.amountRange,
     filters?.categories,
     filters?.merchants,
-    user?.id,
   ]);
-
-  const baseExpenses = useMemo(
-    () => transformDatabaseRowsToDisplay(baseFilteredRows),
-    [baseFilteredRows]
-  );
 
   const sortedExpenses = useMemo(() => {
     const sortBy = filters?.sortBy ?? "date";
     const sortDirection = filters?.sortDirection ?? "desc";
     const direction = sortDirection === "asc" ? 1 : -1;
 
-    return [...baseExpenses].sort((a, b) => {
+    return [...baseFilteredRows].sort((a, b) => {
       if (sortBy === "amount") {
         return (a.amount - b.amount) * direction;
       }
@@ -162,7 +172,7 @@ export function useExpenses(
         (new Date(a.date).getTime() - new Date(b.date).getTime()) * direction
       );
     });
-  }, [baseExpenses, filters?.sortBy, filters?.sortDirection]);
+  }, [baseFilteredRows, filters?.sortBy, filters?.sortDirection]);
 
   const filteredExpenses = useMemo(() => {
     const searchText = filters?.searchText?.trim();
@@ -182,28 +192,15 @@ export function useExpenses(
   }, [filters?.searchText, sortedExpenses]);
 
   const refetch = useCallback(() => {
-    pocketbaseQueryClient.invalidateQueries({
-      queryKey: POCKETBASE_EXPENSES_QUERY_KEY,
-    });
-  }, []);
-
-  if (!authLoading && !user?.id) {
-    return {
-      expenses: [],
-      loading: false,
-      error: "User not authenticated",
-      refetch,
-      totalCount: 0,
-      filteredCount: 0,
-    };
-  }
+    void fetchExpenses();
+  }, [fetchExpenses]);
 
   return {
     expenses: filteredExpenses,
-    loading: authLoading || loading,
+    loading,
     error,
     refetch,
-    totalCount: baseExpenses.length,
+    totalCount: baseFilteredRows.length,
     filteredCount: filteredExpenses.length,
   };
 }

@@ -1,18 +1,25 @@
 import { google } from "@ai-sdk/google";
-import { streamObject } from "ai";
+import { generateObject, streamObject } from "ai";
 import { z } from "zod";
+
 import {
   type AIExpenseInput,
   createAiExpenseSchema,
 } from "@/lib/types/expense";
 
+const DEFAULT_MODEL = "gemini-2.5-flash";
+
+function resolveModel(modelName?: string) {
+  return google(modelName ?? DEFAULT_MODEL);
+}
+
 /**
- * Generate dynamic AI prompt for expense extraction from PDF statements
+ * Generate dynamic AI prompt for expense extraction from statements.
  */
 function generateExpenseExtractionPrompt(userCategories: string[]): string {
   const categoriesText = userCategories.join(", ");
 
-  return `You are a financial data extraction expert. Analyze this bank statement PDF and extract ALL transaction expenses (outgoing payments, purchases, debits).
+  return `You are a financial data extraction expert. Analyze this bank statement and extract ALL transaction expenses (outgoing payments, purchases, debits).
 
 WHAT TO INCLUDE:
 - Purchases from merchants, stores, restaurants
@@ -31,7 +38,7 @@ WHAT TO EXCLUDE:
 
 EXTRACTION FORMAT:
 1. date: Use YYYY-MM-DD format, extract the posted/cleared date (not pending)
-2. description: Keep concise but informative (e.g., "Coffee purchase" not "VISA PURCHASE 123456"),
+2. description: Keep concise but informative (e.g., "Coffee purchase" not "VISA PURCHASE 123456")
 3. merchant: Clean up names by removing unnecessary codes, reference numbers, and extra whitespace
 4. category: Use one of these categories: ${categoriesText}; if uncertain, use "Other"
 5. original_amount: The amount of the transaction before any currency conversion
@@ -46,40 +53,23 @@ QUALITY CHECKS:
 }
 
 /**
- * Process PDF buffer and extract expenses using AI
- * @param fileBuffer - PDF file buffer
- * @param userCategories - User's custom categories
- * @returns AsyncGenerator<ExpenseInput> - Stream of extracted expenses
- */
-/**
  * Create a permissive union schema with three options:
  * 1. Original strict schema
  * 2. String schema that parses JSON and transforms to original schema
- * 3. Permissive schema that accepts anything
+ * 3. Permissive schema that accepts any object shape
  */
 function createPermissiveExpenseSchema(userCategories: string[]) {
   const originalSchema = createAiExpenseSchema(userCategories);
 
   const stringSchema = z.string().transform((data) => {
-    console.log(
-      "🔍 Received JSON string, parsing:",
-      `${data.substring(0, 100)}...`
-    );
-
     try {
       const parsed = JSON.parse(data);
-      console.log("✅ Parsed JSON:", JSON.stringify(parsed, null, 2));
 
-      // Try to validate with original schema
       const result = originalSchema.safeParse(parsed);
       if (result.success) {
         return result.data;
       }
-      console.log(
-        "❌ Parsed JSON failed original schema, coercing:",
-        result.error.issues
-      );
-      // Coerce to valid format
+
       return {
         date: String(parsed.date || ""),
         description: String(parsed.description || ""),
@@ -90,8 +80,7 @@ function createPermissiveExpenseSchema(userCategories: string[]) {
         original_amount: Number(parsed.original_amount) || 0,
         original_currency: String(parsed.original_currency || "SGD"),
       };
-    } catch (error) {
-      console.log("❌ Failed to parse JSON string:", error);
+    } catch {
       return {
         date: "",
         description: "Invalid JSON",
@@ -104,26 +93,21 @@ function createPermissiveExpenseSchema(userCategories: string[]) {
   });
 
   const permissiveSchema = z.any().transform((data) => {
-    console.log(
-      "🔍 Permissive schema, received data:",
-      JSON.stringify(data, null, 2)
-    );
-
-    // Try to coerce any data into valid format
     if (typeof data === "object" && data !== null) {
+      const record = data as Record<string, unknown>;
+
       return {
-        date: String(data.date || ""),
-        description: String(data.description || ""),
-        merchant: String(data.merchant || ""),
-        category: userCategories.includes(String(data.category))
-          ? String(data.category)
+        date: String(record.date || ""),
+        description: String(record.description || ""),
+        merchant: String(record.merchant || ""),
+        category: userCategories.includes(String(record.category))
+          ? String(record.category)
           : "Other",
-        original_amount: Number(data.original_amount) || 0,
-        original_currency: String(data.original_currency || "SGD"),
+        original_amount: Number(record.original_amount) || 0,
+        original_currency: String(record.original_currency || "SGD"),
       };
     }
 
-    // Fallback for non-objects
     return {
       date: "",
       description: "Unknown data type",
@@ -137,44 +121,68 @@ function createPermissiveExpenseSchema(userCategories: string[]) {
   return z.union([originalSchema, stringSchema, permissiveSchema]);
 }
 
+async function collectExpenseStream(
+  elementStream: AsyncIterable<unknown>
+): Promise<AIExpenseInput[]> {
+  const expenses: AIExpenseInput[] = [];
+
+  for await (const element of elementStream) {
+    if (element) {
+      expenses.push(element as AIExpenseInput);
+    }
+  }
+
+  return expenses;
+}
+
+export async function extractExpensesFromStatementText(
+  statementText: string,
+  userCategories: string[],
+  modelName?: string
+): Promise<AIExpenseInput[]> {
+  const prompt = generateExpenseExtractionPrompt(userCategories);
+
+  const { object } = await generateObject({
+    model: resolveModel(modelName),
+    schema: z.array(createPermissiveExpenseSchema(userCategories)),
+    prompt: `${prompt}\n\nSTATEMENT TEXT:\n${statementText}`,
+  });
+
+  return object as AIExpenseInput[];
+}
+
 export async function* extractExpensesFromPdf(
   fileBuffer: Buffer,
-  userCategories: string[]
+  userCategories: string[],
+  modelName?: string
 ): AsyncGenerator<AIExpenseInput, void, unknown> {
   const base64Pdf = fileBuffer.toString("base64");
   const prompt = generateExpenseExtractionPrompt(userCategories);
 
-  try {
-    const { elementStream } = streamObject({
-      model: google("gemini-2.5-flash"),
-      output: "array",
-      schema: createPermissiveExpenseSchema(userCategories),
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: prompt,
-            },
-            {
-              type: "file",
-              data: base64Pdf,
-              mediaType: "application/pdf",
-            },
-          ],
-        },
-      ],
-    });
+  const { elementStream } = streamObject({
+    model: resolveModel(modelName),
+    output: "array",
+    schema: createPermissiveExpenseSchema(userCategories),
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: prompt,
+          },
+          {
+            type: "file",
+            data: base64Pdf,
+            mediaType: "application/pdf",
+          },
+        ],
+      },
+    ],
+  });
 
-    for await (const element of elementStream) {
-      if (element) {
-        console.log("✅ Yielding element:", JSON.stringify(element, null, 2));
-        yield element as AIExpenseInput;
-      }
-    }
-  } catch (error) {
-    console.error("❌ Error in AI extraction:", error);
-    throw error;
+  const expenses = await collectExpenseStream(elementStream);
+  for (const expense of expenses) {
+    yield expense;
   }
 }

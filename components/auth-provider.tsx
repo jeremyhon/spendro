@@ -1,39 +1,38 @@
 "use client";
 
-import type { RecordModel } from "pocketbase";
 import type React from "react";
-import { createContext, useContext, useEffect, useState } from "react";
-import { pocketbase } from "@/lib/pocketbase/client";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
+
+export interface LocalUser {
+  id: string;
+  email: string;
+}
 
 interface AuthContextType {
-  user: RecordModel | null;
+  user: LocalUser | null;
   loading: boolean;
   signIn: (
     email: string,
     password: string
-  ) => Promise<{ data?: { user: RecordModel }; error?: AuthError }>;
+  ) => Promise<{ data?: { user: LocalUser }; error?: AuthError }>;
   signOut: () => Promise<void>;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
 type AuthError = { message: string; status?: number };
 
-async function syncPocketbaseCookie() {
-  try {
-    const isValid = pocketbase.authStore.isValid;
-    const token = isValid ? pocketbase.authStore.token : null;
-    const record = isValid ? pocketbase.authStore.record : null;
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-    await fetch("/api/pocketbase/auth-cookie", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "same-origin",
-      body: JSON.stringify({ token, record }),
-    });
-  } catch (error) {
-    console.error("Failed to sync PocketBase auth cookie:", error);
-  }
+function createLocalUser(email = "local@spendro"): LocalUser {
+  return {
+    id: "local-user",
+    email,
+  };
 }
 
 export function useAuth() {
@@ -45,48 +44,22 @@ export function useAuth() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<RecordModel | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<LocalUser | null>(createLocalUser());
 
-  useEffect(() => {
-    setUser(pocketbase.authStore.record ?? null);
-    setLoading(false);
-
-    const removeListener = pocketbase.authStore.onChange((_token, model) => {
-      setUser(model ?? null);
-      setLoading(false);
-      void syncPocketbaseCookie();
-    }, true);
-
-    return () => removeListener();
+  const signIn = useCallback(async (email: string, _password: string) => {
+    const localUser = createLocalUser(email || "local@spendro");
+    setUser(localUser);
+    return { data: { user: localUser } };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
-    try {
-      const auth = await pocketbase
-        .collection("users")
-        .authWithPassword(email, password);
-      void syncPocketbaseCookie();
-      return { data: { user: auth.record } };
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Failed to sign in";
-      return { error: { message } };
-    }
-  };
+  const signOut = useCallback(async () => {
+    setUser(createLocalUser());
+  }, []);
 
-  const signOut = async () => {
-    try {
-      pocketbase.authStore.clear();
-      void syncPocketbaseCookie();
-    } catch (error) {
-      console.error("Sign out error:", error);
-    }
-  };
-
-  return (
-    <AuthContext.Provider value={{ user, loading, signIn, signOut }}>
-      {children}
-    </AuthContext.Provider>
+  const value = useMemo(
+    () => ({ user, loading: false, signIn, signOut }),
+    [user, signIn, signOut]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

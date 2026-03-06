@@ -25,7 +25,6 @@ import type {
   ExpenseFormData,
 } from "@/lib/types/expense";
 import { CURRENCIES } from "@/lib/types/expense";
-import { getMerchantCategoryMappingClient } from "@/lib/utils/merchant-mappings-client";
 
 interface EditExpenseDialogProps {
   expense: DisplayExpenseWithDuplicate;
@@ -66,28 +65,11 @@ export function EditExpenseDialog({
     date: expense.date,
   });
 
-  // Check if we should show bulk update option when category changes
   useEffect(() => {
-    const checkMerchantMapping = async () => {
-      const categoryChanged = formData.category !== expense.category;
-
-      if (categoryChanged && formData.merchant.trim()) {
-        try {
-          const existingMapping = await getMerchantCategoryMappingClient(
-            formData.merchant,
-            formData.category
-          );
-          setShowBulkUpdateOption(!existingMapping);
-        } catch (error) {
-          console.error("Error checking merchant mapping:", error);
-          setShowBulkUpdateOption(false);
-        }
-      } else {
-        setShowBulkUpdateOption(false);
-      }
-    };
-
-    checkMerchantMapping();
+    const categoryChanged = formData.category !== expense.category;
+    setShowBulkUpdateOption(
+      categoryChanged && formData.merchant.trim().length > 0
+    );
   }, [formData.category, formData.merchant, expense.category]);
 
   const handleSave = async () => {
