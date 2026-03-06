@@ -17,6 +17,9 @@ interface ImportOptions {
   home?: string;
   resetLocal?: boolean;
   downloadStatements?: boolean;
+  admin?: boolean;
+  targetUserId?: string;
+  targetUserEmail?: string;
   json?: boolean;
 }
 
@@ -70,6 +73,11 @@ interface CloudIngestionSetting {
   prompt?: string | null;
 }
 
+interface CloudUser {
+  id: string;
+  email?: string | null;
+}
+
 interface PocketBaseListResult<T> {
   page: number;
   perPage: number;
@@ -79,7 +87,9 @@ interface PocketBaseListResult<T> {
 }
 
 interface ImportSummary {
+  authMode: "user" | "admin";
   userId: string;
+  userEmail?: string;
   pocketbaseUrl: string;
   localHome: string;
   localDatabasePath: string;
@@ -229,6 +239,84 @@ async function authenticateUser(
   return {
     token: authResponse.token,
     userId: authResponse.record.id,
+  };
+}
+
+async function authenticateSuperuser(
+  pocketbaseUrl: string,
+  email: string,
+  password: string
+): Promise<{ token: string }> {
+  const authResponse = await fetchJson<{ token: string }>(
+    pocketbaseUrl + "/api/collections/_superusers/auth-with-password",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        identity: email,
+        password,
+      }),
+    }
+  );
+
+  return {
+    token: authResponse.token,
+  };
+}
+
+async function resolveTargetUser(
+  pocketbaseUrl: string,
+  token: string,
+  options: ImportOptions
+): Promise<{ userId: string; userEmail?: string }> {
+  if (options.targetUserId?.trim()) {
+    return { userId: options.targetUserId.trim() };
+  }
+
+  if (options.targetUserEmail?.trim()) {
+    const targetEmail = options.targetUserEmail.trim();
+    const safeEmail = escapeFilter(targetEmail);
+    const usersByEmail = await listAllRecords<CloudUser>(
+      pocketbaseUrl,
+      token,
+      "users",
+      'email = "' + safeEmail + '"'
+    );
+
+    if (usersByEmail.length === 0) {
+      throw new Error("No cloud user found for email " + targetEmail + ".");
+    }
+
+    if (usersByEmail.length > 1) {
+      throw new Error(
+        "Multiple cloud users found for email " +
+          targetEmail +
+          ". Use --target-user-id."
+      );
+    }
+
+    return {
+      userId: usersByEmail[0].id,
+      userEmail: usersByEmail[0].email ?? undefined,
+    };
+  }
+
+  const users = await listAllRecords<CloudUser>(pocketbaseUrl, token, "users");
+  if (users.length === 0) {
+    throw new Error("No cloud users found in PocketBase.");
+  }
+
+  if (users.length > 1) {
+    throw new Error(
+      "Multiple cloud users found. Pass --target-user-id or --target-user-email."
+    );
+  }
+
+  return {
+    userId: users[0].id,
+    userEmail: users[0].email ?? undefined,
   };
 }
 
@@ -421,7 +509,7 @@ async function importCloudData(options: ImportOptions): Promise<ImportSummary> {
   if (!options.email || !options.password) {
     throw new Error(
       "Missing credentials. Provide --email and --password, or set " +
-        "PB_USER_EMAIL and PB_USER_PASSWORD."
+        "PB_USER_EMAIL/PB_USER_PASSWORD or PB_SUPERUSER_EMAIL/PB_SUPERUSER_PASSWORD."
     );
   }
 
@@ -433,14 +521,36 @@ async function importCloudData(options: ImportOptions): Promise<ImportSummary> {
   initializeLocalStore();
   const localPaths = resolveLocalPaths();
 
-  const { token, userId } = await authenticateUser(
-    pocketbaseUrl,
-    options.email,
-    options.password
-  );
+  let token: string;
+  let userId: string;
+  let userEmail: string | undefined;
+
+  const authMode: "user" | "admin" = options.admin ? "admin" : "user";
+
+  if (authMode === "admin") {
+    const superuserAuth = await authenticateSuperuser(
+      pocketbaseUrl,
+      options.email,
+      options.password
+    );
+    token = superuserAuth.token;
+
+    const targetUser = await resolveTargetUser(pocketbaseUrl, token, options);
+    userId = targetUser.userId;
+    userEmail = targetUser.userEmail;
+  } else {
+    const userAuth = await authenticateUser(
+      pocketbaseUrl,
+      options.email,
+      options.password
+    );
+    token = userAuth.token;
+    userId = userAuth.userId;
+    userEmail = options.email;
+  }
 
   const safeUserId = escapeFilter(userId);
-  const filter = `user_id = "${safeUserId}"`;
+  const filter = 'user_id = "' + safeUserId + '"';
 
   const [cloudCategories, cloudStatements, cloudExpenses, ingestionSettings] =
     await Promise.all([
@@ -463,7 +573,9 @@ async function importCloudData(options: ImportOptions): Promise<ImportSummary> {
   const db = new Database(localPaths.databasePath);
 
   const summary: ImportSummary = {
+    authMode,
     userId,
+    userEmail,
     pocketbaseUrl,
     localHome: localPaths.homeDir,
     localDatabasePath: localPaths.databasePath,
@@ -737,7 +849,11 @@ function printResult(summary: ImportSummary, asJson: boolean): void {
     return;
   }
 
-  console.log(`PocketBase user: ${summary.userId}`);
+  console.log("Auth mode: " + summary.authMode);
+  if (summary.userEmail) {
+    console.log("PocketBase user email: " + summary.userEmail);
+  }
+  console.log("PocketBase user id: " + summary.userId);
   console.log(`Source: ${summary.pocketbaseUrl}`);
   console.log(`Local home: ${summary.localHome}`);
   console.log(`Local db: ${summary.localDatabasePath}`);
@@ -770,12 +886,12 @@ async function run(): Promise<void> {
     .requiredOption(
       "--email <email>",
       "PocketBase user email",
-      process.env.PB_USER_EMAIL
+      process.env.PB_USER_EMAIL ?? process.env.PB_SUPERUSER_EMAIL
     )
     .requiredOption(
       "--password <password>",
       "PocketBase user password",
-      process.env.PB_USER_PASSWORD
+      process.env.PB_USER_PASSWORD ?? process.env.PB_SUPERUSER_PASSWORD
     )
     .option(
       "--url <url>",
@@ -785,6 +901,12 @@ async function run(): Promise<void> {
         "http://localhost:8090"
     )
     .option("--home <path>", "Override SPENDRO_HOME for import destination")
+    .option("--admin", "Authenticate as PocketBase superuser")
+    .option("--target-user-id <id>", "Target user id when using --admin")
+    .option(
+      "--target-user-email <email>",
+      "Target user email when using --admin"
+    )
     .option("--reset-local", "Clear local data before import")
     .option(
       "--download-statements",
