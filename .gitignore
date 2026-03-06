@@ -40,3 +40,6 @@ dev.log
 
 # local pocketbase data
 .pocketbase
+
+# codex local notes
+.codex/
