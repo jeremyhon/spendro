@@ -7,6 +7,7 @@
 - `lib/local/`: local SQLite core, parser backends, backup/restore, and web adapter.
 - `lib/types/` + `lib/utils/`: shared schemas and UI/domain utilities.
 - `scripts/local-cli.ts`: local CLI entrypoint (`spendro-local`).
+- `scripts/import-cloud-to-local.ts`: one-time PocketBase -> local SQLite importer.
 - `docs/local-first-rearchitecture.md`: architecture, intentions, requirements,
   and migration progress.
 - `app/globals.css`: global styling and Tailwind setup.
@@ -21,6 +22,8 @@
 - `bun test`: run Bun’s test runner.
 - `bun run local`: run the local CLI.
 - `bun run local:help`: show CLI help.
+- `bun run import:cloud`: import cloud PocketBase data into local SQLite.
+- `bun run import:cloud:help`: show importer help.
 
 ## Coding Style & Naming Conventions
 - TypeScript + React with 2-space indentation, double quotes, semicolons, 80-char line width.
@@ -45,6 +48,8 @@
   - `SPENDRO_HOME` (optional): overrides local data directory.
   - `GOOGLE_GENERATIVE_AI_API_KEY` (required only for embedded LLM parsing).
   - `SPENDRO_LOCAL_LLM_MODEL` (optional): overrides default local LLM model.
+  - `PB_USER_EMAIL` and `PB_USER_PASSWORD` (for cloud import script).
+  - `POCKETBASE_URL` (optional, defaults to `NEXT_PUBLIC_POCKETBASE_URL`).
 
 ## Agent-Specific Instructions
 - Do not start or stop the dev server; it is managed externally.

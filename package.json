@@ -14,7 +14,9 @@
     "log:clear": "rm -f dev.log",
     "prepare": "husky",
     "local": "bun run scripts/local-cli.ts",
-    "local:help": "bun run scripts/local-cli.ts --help"
+    "local:help": "bun run scripts/local-cli.ts --help",
+    "import:cloud": "bun run scripts/import-cloud-to-local.ts",
+    "import:cloud:help": "bun run scripts/import-cloud-to-local.ts --help"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,css,md}": [

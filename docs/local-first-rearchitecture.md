@@ -73,6 +73,23 @@ SQLite access uses Bun's native driver: `bun:sqlite`.
 - `spendro-local transaction list [--statement-id <id>] [--json]`
 - `spendro-local backup create [--out <path>]`
 - `spendro-local backup restore --file <path>`
+- `bun run import:cloud --email <email> --password <password> [--reset-local] [--download-statements] [--json]`
+
+## Cloud Import (one-time migration)
+- Script: `scripts/import-cloud-to-local.ts`
+- Auth: PocketBase user credentials (email + password)
+- Source URL default: `NEXT_PUBLIC_POCKETBASE_URL` or `POCKETBASE_URL`
+- Destination: current `SPENDRO_HOME` local SQLite + statements directory
+- Optional `--reset-local` clears local data before import
+- Optional `--download-statements` attempts to fetch files from `blob_url`; if download fails, importer creates local metadata stub files so statement records remain consistent
+
+Example:
+```bash
+export SPENDRO_HOME=/tmp/spendro-local
+export PB_USER_EMAIL="you.com"
+export PB_USER_PASSWORD="your-password"
+bun run import:cloud --reset-local --download-statements
+```
 
 ## Local web scope
 - Dashboard charts/headline numbers read local SQLite expenses.
@@ -119,6 +136,7 @@ bun run local backup create --json
 
 ## Verified behavior (2026-03-06)
 - `bun run check` passes (Biome + TypeScript).
+- `bun run import:cloud:help` works and shows importer options.
 - CLI smoke test passed with temporary `SPENDRO_HOME`:
   - `local init`
   - `local statement store`
