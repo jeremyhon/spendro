@@ -1,20 +1,32 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { Command, CommanderError } from "commander";
 
 import { createBackupArchive, restoreBackupArchive } from "@/lib/local/backup";
 import {
+  auditEmbeddedParserAgainstKnownGood,
+  auditEmbeddedParserWithOcr,
+} from "@/lib/local/parser-audit";
+import {
   addCategory,
   addStatementText,
   initializeLocalStore,
+  listAccounts,
   listCategories,
+  listMissingStatementGaps,
+  listStatementCoverage,
+  listStatementCoverageOverrides,
   listStatements,
   listTransactions,
+  refreshStatementCoverage,
+  removeStatementCoverageOverride,
   runAgentParse,
   runEmbeddedLlmParse,
   runEmbeddedParse,
   storeStatement,
+  upsertStatementCoverageOverride,
 } from "@/lib/local/repository";
+import type { AccountProductType } from "@/lib/local/types";
 
 interface GlobalOptions {
   json?: boolean;
@@ -144,7 +156,210 @@ transactionCommand
     printResult(transactions, this);
   });
 
+const coverageCommand = program
+  .command("coverage")
+  .description("Statement coverage and gap analysis");
+
+coverageCommand
+  .command("refresh")
+  .description("Infer account and statement-month mapping for all statements")
+  .action(function () {
+    const result = refreshStatementCoverage();
+    printResult(result, this);
+  });
+
+coverageCommand
+  .command("accounts")
+  .description("List inferred accounts/cards")
+  .action(function () {
+    const accounts = listAccounts();
+    printResult(accounts, this);
+  });
+
+coverageCommand
+  .command("map")
+  .description("List statement-to-account-month mappings")
+  .action(function () {
+    const mappings = listStatementCoverage();
+    printResult(mappings, this);
+  });
+
+coverageCommand
+  .command("overrides")
+  .description("List manual statement-account-month overrides")
+  .action(function () {
+    const overrides = listStatementCoverageOverrides();
+    printResult(overrides, this);
+  });
+
+coverageCommand
+  .command("assign")
+  .description("Create or update manual mapping for one statement")
+  .requiredOption("--statement-id <id>", "Statement ID")
+  .requiredOption("--institution <name>", "Institution/provider name")
+  .requiredOption(
+    "--product-type <type>",
+    "Account product type: card | account | other"
+  )
+  .requiredOption("--label <label>", "Account/card label")
+  .requiredOption("--month <yyyy-mm>", "Statement month in YYYY-MM")
+  .option("--last4 <digits>", "Optional last 4 digits")
+  .option("--reason <text>", "Optional reason/note for manual override")
+  .option(
+    "--refresh",
+    "Refresh coverage immediately after saving override",
+    true
+  )
+  .action(function (options) {
+    const productType = String(options.productType).toLowerCase();
+    if (
+      productType !== "card" &&
+      productType !== "account" &&
+      productType !== "other"
+    ) {
+      throw new Error(
+        `Unsupported product type "${productType}". Use card|account|other.`
+      );
+    }
+
+    const override = upsertStatementCoverageOverride({
+      statementId: String(options.statementId),
+      institution: String(options.institution),
+      productType: productType as AccountProductType,
+      accountLabel: String(options.label),
+      last4: options.last4 ? String(options.last4) : null,
+      statementMonth: String(options.month),
+      reason: options.reason ? String(options.reason) : undefined,
+    });
+
+    const shouldRefresh = options.refresh !== false;
+    const refreshResult = shouldRefresh ? refreshStatementCoverage() : null;
+
+    printResult(
+      {
+        override,
+        refresh: refreshResult,
+      },
+      this
+    );
+  });
+
+coverageCommand
+  .command("unassign")
+  .description("Remove manual mapping override for one statement")
+  .requiredOption("--statement-id <id>", "Statement ID")
+  .option(
+    "--refresh",
+    "Refresh coverage immediately after removing override",
+    true
+  )
+  .action(function (options) {
+    const result = removeStatementCoverageOverride(String(options.statementId));
+    const shouldRefresh = options.refresh !== false;
+    const refreshResult = shouldRefresh ? refreshStatementCoverage() : null;
+
+    printResult(
+      {
+        ...result,
+        refresh: refreshResult,
+      },
+      this
+    );
+  });
+
+coverageCommand
+  .command("gaps")
+  .description(
+    "List missing statement months per active account up to as-of month"
+  )
+  .option("--as-of <yyyy-mm>", "As-of month for gap analysis")
+  .option(
+    "--include-complete",
+    "Include accounts with no missing months in output",
+    false
+  )
+  .option(
+    "--refresh",
+    "Refresh inferred mappings before calculating gaps",
+    true
+  )
+  .action(function (options) {
+    const shouldRefresh = options.refresh !== false;
+    const refreshResult = shouldRefresh ? refreshStatementCoverage() : null;
+
+    const gaps = listMissingStatementGaps({
+      asOfMonth: options.asOf,
+      includeComplete: options.includeComplete === true,
+    });
+
+    printResult(
+      {
+        asOfMonth: options.asOf ?? "auto(previous month)",
+        refresh: refreshResult,
+        gaps,
+      },
+      this
+    );
+  });
+
 const parseCommand = program.command("parse").description("Parse operations");
+
+parseCommand
+  .command("audit-known")
+  .description(
+    "Cross-check embedded parser output against known-good transactions"
+  )
+  .option("--statement-id <id>", "Audit one statement ID")
+  .option("--limit <n>", "Limit statements processed", Number.parseInt)
+  .action(function (options) {
+    const result = auditEmbeddedParserAgainstKnownGood({
+      statementId: options.statementId
+        ? String(options.statementId)
+        : undefined,
+      limit:
+        typeof options.limit === "number" && Number.isFinite(options.limit)
+          ? options.limit
+          : undefined,
+    });
+
+    printResult(result, this);
+  });
+
+parseCommand
+  .command("audit-ocr")
+  .description(
+    "Render statement PDFs to images + OCR and verify parsed transactions are visible"
+  )
+  .option("--statement-id <id>", "Audit one statement ID")
+  .option(
+    "--only-unknown",
+    "Only audit statements with no known-good transactions",
+    true
+  )
+  .option(
+    "--limit <n>",
+    "Limit statements processed (recommended for OCR runs)",
+    Number.parseInt
+  )
+  .option("--dpi <n>", "Render DPI for PDF-to-image", Number.parseInt)
+  .action(function (options) {
+    const result = auditEmbeddedParserWithOcr({
+      statementId: options.statementId
+        ? String(options.statementId)
+        : undefined,
+      onlyUnknown: options.onlyUnknown !== false,
+      limit:
+        typeof options.limit === "number" && Number.isFinite(options.limit)
+          ? options.limit
+          : undefined,
+      dpi:
+        typeof options.dpi === "number" && Number.isFinite(options.dpi)
+          ? options.dpi
+          : undefined,
+    });
+
+    printResult(result, this);
+  });
 
 parseCommand
   .command("run")

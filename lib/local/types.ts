@@ -91,3 +91,57 @@ export interface ParseResult {
   parseRun: ParseRunRecord;
   insertedTransactions: number;
 }
+
+export type AccountProductType = "card" | "account" | "other";
+
+export interface AccountRecord {
+  id: string;
+  institution: string;
+  productType: AccountProductType;
+  accountLabel: string;
+  last4: string | null;
+  dedupeKey: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StatementCoverageRecord {
+  statementId: string;
+  accountId: string;
+  statementMonth: string;
+  inferredBy: string;
+  confidence: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StatementCoverageOverrideRecord {
+  statementId: string;
+  institution: string;
+  productType: AccountProductType;
+  accountLabel: string;
+  last4: string | null;
+  statementMonth: string;
+  reason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertStatementCoverageOverrideInput {
+  statementId: string;
+  institution: string;
+  productType: AccountProductType;
+  accountLabel: string;
+  last4?: string | null;
+  statementMonth: string;
+  reason?: string;
+}
+
+export interface MissingStatementGapRecord {
+  account: AccountRecord;
+  asOfMonth: string;
+  firstObservedMonth: string;
+  observedMonths: string[];
+  missingMonths: string[];
+}
