@@ -8,25 +8,34 @@ import {
   auditEmbeddedParserWithOcr,
 } from "@/lib/local/parser-audit";
 import {
+  addCategorizationRule,
   addCategory,
   addStatementText,
   initializeLocalStore,
   listAccounts,
   listCategories,
+  listCategorizationRules,
   listMissingStatementGaps,
   listStatementCoverage,
   listStatementCoverageOverrides,
   listStatements,
   listTransactions,
   refreshStatementCoverage,
+  removeCategorizationRule,
   removeStatementCoverageOverride,
   runAgentParse,
   runEmbeddedLlmParse,
   runEmbeddedParse,
   storeStatement,
+  testCategorizationRules,
   upsertStatementCoverageOverride,
 } from "@/lib/local/repository";
-import type { AccountProductType } from "@/lib/local/types";
+import type {
+  AccountProductType,
+  CategorizationRuleAction,
+  CategorizationRuleMatchField,
+  CategorizationRuleMatchType,
+} from "@/lib/local/types";
 
 interface GlobalOptions {
   json?: boolean;
@@ -141,6 +150,104 @@ categoryCommand
   .action(function () {
     const categories = listCategories();
     printResult(categories, this);
+  });
+
+const ruleCommand = program
+  .command("rule")
+  .description("Categorization and visibility rule operations");
+
+ruleCommand
+  .command("list")
+  .description("List local categorization rules")
+  .action(function () {
+    const rules = listCategorizationRules();
+    printResult(rules, this);
+  });
+
+ruleCommand
+  .command("add")
+  .description("Add a categorization rule")
+  .requiredOption("--field <field>", "Match field: merchant | description")
+  .requiredOption("--match <type>", "Match type: exact | contains | regex")
+  .requiredOption("--pattern <text>", "Pattern to match")
+  .option(
+    "--action <action>",
+    "Action: categorize | hide | ignore",
+    "categorize"
+  )
+  .option("--category <name>", "Category name (required for categorize)")
+  .option("--account-id <id>", "Optional account scope")
+  .option("--priority <n>", "Lower number runs first", Number.parseInt)
+  .option("--notes <text>", "Optional notes")
+  .option("--inactive", "Create rule in inactive state", false)
+  .action(function (options) {
+    const field = String(options.field).toLowerCase();
+    if (field !== "merchant" && field !== "description") {
+      throw new Error(
+        `Unsupported field "${field}". Use merchant|description.`
+      );
+    }
+
+    const matchType = String(options.match).toLowerCase();
+    if (
+      matchType !== "exact" &&
+      matchType !== "contains" &&
+      matchType !== "regex"
+    ) {
+      throw new Error(
+        `Unsupported match type "${matchType}". Use exact|contains|regex.`
+      );
+    }
+
+    const action = String(options.action).toLowerCase();
+    if (action !== "categorize" && action !== "hide" && action !== "ignore") {
+      throw new Error(
+        `Unsupported action "${action}". Use categorize|hide|ignore.`
+      );
+    }
+
+    const rule = addCategorizationRule({
+      action: action as CategorizationRuleAction,
+      matchField: field as CategorizationRuleMatchField,
+      matchType: matchType as CategorizationRuleMatchType,
+      pattern: String(options.pattern),
+      categoryName: options.category ? String(options.category) : undefined,
+      accountId: options.accountId ? String(options.accountId) : null,
+      priority:
+        typeof options.priority === "number" &&
+        Number.isFinite(options.priority)
+          ? options.priority
+          : undefined,
+      isActive: options.inactive !== true,
+      notes: options.notes ? String(options.notes) : undefined,
+    });
+
+    printResult(rule, this);
+  });
+
+ruleCommand
+  .command("remove")
+  .description("Remove a categorization rule")
+  .requiredOption("--rule-id <id>", "Rule ID")
+  .action(function (options) {
+    const result = removeCategorizationRule(String(options.ruleId));
+    printResult(result, this);
+  });
+
+ruleCommand
+  .command("test")
+  .description("Test which rule would match a transaction sample")
+  .requiredOption("--description <text>", "Sample transaction description")
+  .option("--merchant <text>", "Sample merchant value")
+  .option("--account-id <id>", "Optional account ID for scoped-rule evaluation")
+  .action(function (options) {
+    const result = testCategorizationRules({
+      description: String(options.description),
+      merchant: options.merchant ? String(options.merchant) : null,
+      accountId: options.accountId ? String(options.accountId) : null,
+    });
+
+    printResult(result, this);
   });
 
 const transactionCommand = program

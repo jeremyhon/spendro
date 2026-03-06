@@ -64,7 +64,12 @@ function isSuppressedTransactionRow(row: {
   id: string;
   description?: string | null;
   merchant?: string | null;
+  is_hidden?: number;
 }): boolean {
+  if (row.is_hidden === 1) {
+    return true;
+  }
+
   if (isSuppressedTransaction(row.id)) {
     return true;
   }
@@ -87,6 +92,7 @@ interface LocalExpenseRow {
   description: string;
   merchant: string | null;
   category: string | null;
+  is_hidden: number;
   amount: number;
   currency: string;
   created_at: string;
@@ -339,7 +345,8 @@ export function getLocalCategoryExpenseCount(categoryId: string): number {
         `SELECT
           id,
           description,
-          merchant
+          merchant,
+          is_hidden
         FROM transactions
         WHERE category_id = ?1`
       )
@@ -347,6 +354,7 @@ export function getLocalCategoryExpenseCount(categoryId: string): number {
       id: string;
       description: string;
       merchant: string | null;
+      is_hidden: number;
     }>;
 
     return rows.filter((row) => !isSuppressedTransactionRow(row)).length;
@@ -369,6 +377,7 @@ export function listLocalDisplayExpenses(): DisplayExpenseWithDuplicate[] {
           t.description,
           t.merchant,
           c.name as category,
+          t.is_hidden,
           t.amount,
           t.currency,
           t.created_at
@@ -411,6 +420,7 @@ export function listLocalExpenseFacts(dateRange?: {
             t.description,
             t.merchant,
             c.name as category,
+            t.is_hidden,
             t.amount
           FROM transactions t
           LEFT JOIN categories c ON c.id = t.category_id
@@ -423,6 +433,7 @@ export function listLocalExpenseFacts(dateRange?: {
         description: string;
         merchant: string | null;
         category: string | null;
+        is_hidden: number;
         amount: number;
       }>;
 
@@ -443,6 +454,7 @@ export function listLocalExpenseFacts(dateRange?: {
           t.description,
           t.merchant,
           c.name as category,
+          t.is_hidden,
           t.amount
         FROM transactions t
         LEFT JOIN categories c ON c.id = t.category_id
@@ -454,6 +466,7 @@ export function listLocalExpenseFacts(dateRange?: {
       description: string;
       merchant: string | null;
       category: string | null;
+      is_hidden: number;
       amount: number;
     }>;
 

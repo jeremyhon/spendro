@@ -72,6 +72,18 @@ interface CloudIngestionSetting {
   prompt?: string | null;
 }
 
+interface CloudMerchantMapping {
+  id: string;
+  merchant_name?: string | null;
+  category_id?: string | null;
+  category_text?: string | null;
+  category?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  created?: string;
+  updated?: string;
+}
+
 interface CloudUser {
   id: string;
   email?: string | null;
@@ -100,6 +112,8 @@ interface ImportSummary {
   statementsSkipped: number;
   transactionsImported: number;
   transactionsSkipped: number;
+  categorizationRulesImported: number;
+  categorizationRulesSkipped: number;
   statementFilesDownloaded: number;
   statementFilesStubbed: number;
   ingestionPromptImported: boolean;
@@ -403,6 +417,10 @@ function seedDefaultCategories(db: Database): void {
 function resetLocalData(db: Database): void {
   db.exec("DELETE FROM transactions;");
   db.exec("DELETE FROM parse_runs;");
+  db.exec("DELETE FROM categorization_rules;");
+  db.exec("DELETE FROM statement_account_months;");
+  db.exec("DELETE FROM statement_account_overrides;");
+  db.exec("DELETE FROM accounts;");
   db.exec("DELETE FROM statement_texts;");
   db.exec("DELETE FROM statements;");
   db.exec("DELETE FROM categories;");
@@ -551,23 +569,29 @@ async function importCloudData(options: ImportOptions): Promise<ImportSummary> {
   const safeUserId = escapeFilter(userId);
   const filter = 'user_id = "' + safeUserId + '"';
 
-  const [cloudCategories, cloudStatements, cloudExpenses, ingestionSettings] =
-    await Promise.all([
-      listAllRecords<CloudCategory>(pocketbaseUrl, token, "categories", filter),
-      listAllRecords<CloudStatement>(
-        pocketbaseUrl,
-        token,
-        "statements",
-        filter
-      ),
-      listAllRecords<CloudExpense>(pocketbaseUrl, token, "expenses", filter),
-      listAllRecords<CloudIngestionSetting>(
-        pocketbaseUrl,
-        token,
-        "ingestion_settings",
-        filter
-      ),
-    ]);
+  const [
+    cloudCategories,
+    cloudStatements,
+    cloudExpenses,
+    ingestionSettings,
+    cloudMerchantMappings,
+  ] = await Promise.all([
+    listAllRecords<CloudCategory>(pocketbaseUrl, token, "categories", filter),
+    listAllRecords<CloudStatement>(pocketbaseUrl, token, "statements", filter),
+    listAllRecords<CloudExpense>(pocketbaseUrl, token, "expenses", filter),
+    listAllRecords<CloudIngestionSetting>(
+      pocketbaseUrl,
+      token,
+      "ingestion_settings",
+      filter
+    ),
+    listAllRecords<CloudMerchantMapping>(
+      pocketbaseUrl,
+      token,
+      "merchant_mappings",
+      filter
+    ),
+  ]);
 
   const db = new Database(localPaths.databasePath);
 
@@ -586,6 +610,8 @@ async function importCloudData(options: ImportOptions): Promise<ImportSummary> {
     statementsSkipped: 0,
     transactionsImported: 0,
     transactionsSkipped: 0,
+    categorizationRulesImported: 0,
+    categorizationRulesSkipped: 0,
     statementFilesDownloaded: 0,
     statementFilesStubbed: 0,
     ingestionPromptImported: false,
@@ -657,6 +683,98 @@ async function importCloudData(options: ImportOptions): Promise<ImportSummary> {
       categoryById.set(id, id);
       cloudToLocalCategoryId.set(category.id, id);
       summary.categoriesImported += 1;
+    }
+
+    for (const mapping of cloudMerchantMappings) {
+      const merchantName = mapping.merchant_name?.trim() || "";
+      if (!merchantName) {
+        summary.categorizationRulesSkipped += 1;
+        continue;
+      }
+
+      let localCategoryId: string | null = null;
+      const cloudCategoryId = mapping.category_id?.trim() || "";
+      if (cloudCategoryId && cloudToLocalCategoryId.has(cloudCategoryId)) {
+        localCategoryId = cloudToLocalCategoryId.get(cloudCategoryId) as string;
+      } else {
+        const categoryName =
+          mapping.category_text?.trim() || mapping.category?.trim() || "";
+        if (categoryName) {
+          localCategoryId = ensureCategoryByName(
+            db,
+            categoryName,
+            categoryByLowerName
+          );
+        }
+      }
+
+      if (!localCategoryId) {
+        summary.categorizationRulesSkipped += 1;
+        continue;
+      }
+
+      const existing = db
+        .query(
+          `SELECT id
+           FROM categorization_rules
+           WHERE action = 'categorize'
+             AND match_field = 'merchant'
+             AND match_type = 'contains'
+             AND normalized_pattern = ?1
+             AND COALESCE(category_id, '') = ?2
+             AND account_id IS NULL
+           LIMIT 1`
+        )
+        .get(
+          merchantName.toLowerCase().replaceAll(/\s+/g, " ").trim(),
+          localCategoryId
+        ) as { id: string } | null;
+
+      if (existing) {
+        summary.categorizationRulesSkipped += 1;
+        continue;
+      }
+
+      const timestamp = normalizeTimestamp(
+        mapping.updated_at,
+        mapping.updated,
+        mapping.created_at,
+        mapping.created
+      );
+
+      db.query(
+        `INSERT INTO categorization_rules (
+          id,
+          action,
+          match_field,
+          match_type,
+          pattern,
+          normalized_pattern,
+          category_id,
+          account_id,
+          priority,
+          is_active,
+          notes,
+          created_at,
+          updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+      ).run(
+        mapping.id?.trim() || randomUUID(),
+        "categorize",
+        "merchant",
+        "contains",
+        merchantName,
+        merchantName.toLowerCase().replaceAll(/\s+/g, " ").trim(),
+        localCategoryId,
+        null,
+        100,
+        1,
+        "Imported from cloud merchant_mappings",
+        timestamp,
+        timestamp
+      );
+
+      summary.categorizationRulesImported += 1;
     }
 
     const statementIdMap = new Map<string, string>();
@@ -866,6 +984,12 @@ function printResult(summary: ImportSummary, asJson: boolean): void {
   console.log(`- Statements skipped: ${summary.statementsSkipped}`);
   console.log(`- Transactions imported: ${summary.transactionsImported}`);
   console.log(`- Transactions skipped: ${summary.transactionsSkipped}`);
+  console.log(
+    `- Categorization rules imported: ${summary.categorizationRulesImported}`
+  );
+  console.log(
+    `- Categorization rules skipped: ${summary.categorizationRulesSkipped}`
+  );
   console.log(
     `- Statement files downloaded: ${summary.statementFilesDownloaded}`
   );

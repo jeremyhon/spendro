@@ -2,6 +2,12 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
+import {
+  type CategorizationRuleMatcher,
+  findFirstMatchingCategorizationRule,
+  normalizeRulePattern,
+  type RuleMatchCandidate,
+} from "@/lib/local/categorization-rules";
 import { parseTransactionsWithEmbeddedLlm } from "@/lib/local/llm-parser";
 import {
   parseAgentTransactionsJson,
@@ -13,14 +19,19 @@ import { Database } from "@/lib/local/sqlite";
 import type {
   AccountProductType,
   AccountRecord,
+  AddCategorizationRuleInput,
   AddCategoryInput,
   AddStatementTextInput,
+  CategorizationRuleRecord,
+  CategorizationRuleTestInput,
+  CategorizationRuleTestResult,
   CategoryRecord,
   MissingStatementGapRecord,
   ParsedTransactionInput,
   ParseMode,
   ParseResult,
   ParseRunRecord,
+  RemoveCategorizationRuleResult,
   StatementCoverageOverrideRecord,
   StatementCoverageRecord,
   StatementRecord,
@@ -60,6 +71,7 @@ interface TransactionRow {
   merchant: string | null;
   category_id: string | null;
   category_name: string | null;
+  is_hidden: number;
   amount: number;
   currency: string;
   created_at: string;
@@ -116,6 +128,23 @@ interface StatementMetadataRow {
   file_name: string;
   file_path: string;
   created_at: string;
+}
+
+interface CategorizationRuleRow {
+  id: string;
+  action: "categorize" | "hide" | "ignore";
+  match_field: "merchant" | "description";
+  match_type: "exact" | "contains" | "regex";
+  pattern: string;
+  normalized_pattern: string;
+  category_id: string | null;
+  category_name: string | null;
+  account_id: string | null;
+  priority: number;
+  is_active: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface StatementAccountInference {
@@ -258,6 +287,7 @@ function toTransactionRecord(row: TransactionRow): TransactionRecord {
     merchant: row.merchant,
     categoryId: row.category_id,
     categoryName: row.category_name,
+    isHidden: row.is_hidden === 1,
     amount: row.amount,
     currency: row.currency,
     createdAt: row.created_at,
@@ -322,6 +352,27 @@ function toStatementCoverageOverrideRecord(
   };
 }
 
+function toCategorizationRuleRecord(
+  row: CategorizationRuleRow
+): CategorizationRuleRecord {
+  return {
+    id: row.id,
+    action: row.action,
+    matchField: row.match_field,
+    matchType: row.match_type,
+    pattern: row.pattern,
+    normalizedPattern: row.normalized_pattern,
+    categoryId: row.category_id,
+    categoryName: row.category_name,
+    accountId: row.account_id,
+    priority: row.priority,
+    isActive: row.is_active === 1,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function withDatabase<T>(callback: (db: Database) => T): T {
   const paths = resolveLocalPaths();
   ensureLocalDirectories(paths);
@@ -331,12 +382,33 @@ function withDatabase<T>(callback: (db: Database) => T): T {
   try {
     db.exec("PRAGMA foreign_keys = ON;");
     db.exec(LOCAL_SCHEMA_SQL);
+    applySchemaMigrations(db);
     seedDefaultCategories(db);
 
     return callback(db);
   } finally {
     db.close();
   }
+}
+
+function tableHasColumn(db: Database, table: string, column: string): boolean {
+  const rows = db.query(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+
+  return rows.some((row) => row.name === column);
+}
+
+function applySchemaMigrations(db: Database): void {
+  if (!tableHasColumn(db, "transactions", "is_hidden")) {
+    db.exec(
+      "ALTER TABLE transactions ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0 CHECK (is_hidden IN (0, 1));"
+    );
+  }
+
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_transactions_hidden ON transactions(is_hidden);"
+  );
 }
 
 function seedDefaultCategories(db: Database): void {
@@ -430,6 +502,157 @@ function findOtherCategoryId(db: Database): string | null {
     .get() as { id: string } | null;
 
   return row?.id ?? null;
+}
+
+function findCategoryIdByName(db: Database, name: string): string | null {
+  const row = db
+    .query(
+      "SELECT id FROM categories WHERE lower(name) = lower(?1) ORDER BY created_at ASC LIMIT 1"
+    )
+    .get(name) as { id: string } | null;
+
+  return row?.id ?? null;
+}
+
+function getOrCreateCategoryIdByName(db: Database, name: string): string {
+  const existingId = findCategoryIdByName(db, name);
+  if (existingId) {
+    return existingId;
+  }
+
+  const now = nowIso();
+  const categoryId = randomUUID();
+  db.query(
+    `INSERT INTO categories (
+      id,
+      name,
+      description,
+      is_default,
+      created_at,
+      updated_at
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)`
+  ).run(categoryId, name, null, 0, now, now);
+
+  return categoryId;
+}
+
+function getStatementAccountId(
+  db: Database,
+  statementId: string
+): string | null {
+  const row = db
+    .query(
+      `SELECT account_id
+       FROM statement_account_months
+       WHERE statement_id = ?1
+       ORDER BY confidence DESC, created_at ASC
+       LIMIT 1`
+    )
+    .get(statementId) as { account_id: string } | null;
+
+  return row?.account_id ?? null;
+}
+
+function getCategorizationRuleMatchers(
+  db: Database,
+  accountId: string | null
+): CategorizationRuleMatcher[] {
+  const rows = db
+    .query(
+      `SELECT
+        id,
+        action,
+        match_field,
+        match_type,
+        pattern,
+        normalized_pattern,
+        category_id,
+        account_id,
+        priority,
+        is_active,
+        created_at
+      FROM categorization_rules
+      WHERE is_active = 1
+        AND (account_id IS NULL OR account_id = ?1)
+      ORDER BY priority ASC, created_at ASC`
+    )
+    .all(accountId) as Array<{
+    id: string;
+    action: "categorize" | "hide" | "ignore";
+    match_field: "merchant" | "description";
+    match_type: "exact" | "contains" | "regex";
+    pattern: string;
+    normalized_pattern: string;
+    category_id: string | null;
+    account_id: string | null;
+    priority: number;
+    is_active: number;
+    created_at: string;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    matchField: row.match_field,
+    matchType: row.match_type,
+    pattern: row.pattern,
+    normalizedPattern: row.normalized_pattern,
+    categoryId: row.category_id,
+    accountId: row.account_id,
+    priority: row.priority,
+    isActive: row.is_active === 1,
+    createdAt: row.created_at,
+  }));
+}
+
+function resolveCategoryIdForRule(
+  db: Database,
+  input: AddCategorizationRuleInput
+): string | null {
+  if (input.action !== "categorize") {
+    return null;
+  }
+
+  const categoryName = input.categoryName?.trim();
+  if (!categoryName) {
+    throw new Error("Categorize rules require --category <name>.");
+  }
+
+  return getOrCreateCategoryIdByName(db, categoryName);
+}
+
+function buildCategorizationHintLines(
+  db: Database,
+  accountId: string | null
+): string[] {
+  const rows = db
+    .query(
+      `SELECT
+        r.match_field,
+        r.match_type,
+        r.pattern,
+        c.name as category_name
+      FROM categorization_rules r
+      LEFT JOIN categories c ON c.id = r.category_id
+      WHERE r.is_active = 1
+        AND r.action = 'categorize'
+        AND c.name IS NOT NULL
+        AND (r.account_id IS NULL OR r.account_id = ?1)
+      ORDER BY r.priority ASC, r.created_at ASC
+      LIMIT 200`
+    )
+    .all(accountId) as Array<{
+    match_field: "merchant" | "description";
+    match_type: "exact" | "contains" | "regex";
+    pattern: string;
+    category_name: string;
+  }>;
+
+  return rows.map((row) => {
+    const field = row.match_field === "merchant" ? "merchant" : "description";
+    const match = row.match_type;
+    return `${field} ${match} "${row.pattern}" => ${row.category_name}`;
+  });
 }
 
 function normalizeText(value: string): string {
@@ -1210,6 +1433,190 @@ export function addCategory(input: AddCategoryInput): CategoryRecord {
   });
 }
 
+function getCategorizationRuleById(
+  db: Database,
+  ruleId: string
+): CategorizationRuleRow {
+  const row = db
+    .query(
+      `SELECT
+        r.id,
+        r.action,
+        r.match_field,
+        r.match_type,
+        r.pattern,
+        r.normalized_pattern,
+        r.category_id,
+        c.name as category_name,
+        r.account_id,
+        r.priority,
+        r.is_active,
+        r.notes,
+        r.created_at,
+        r.updated_at
+      FROM categorization_rules r
+      LEFT JOIN categories c ON c.id = r.category_id
+      WHERE r.id = ?1
+      LIMIT 1`
+    )
+    .get(ruleId) as CategorizationRuleRow | null;
+
+  if (!row) {
+    throw new Error(`Categorization rule "${ruleId}" not found.`);
+  }
+
+  return row;
+}
+
+export function listCategorizationRules(): CategorizationRuleRecord[] {
+  return withDatabase((db) => {
+    const rows = db
+      .query(
+        `SELECT
+          r.id,
+          r.action,
+          r.match_field,
+          r.match_type,
+          r.pattern,
+          r.normalized_pattern,
+          r.category_id,
+          c.name as category_name,
+          r.account_id,
+          r.priority,
+          r.is_active,
+          r.notes,
+          r.created_at,
+          r.updated_at
+        FROM categorization_rules r
+        LEFT JOIN categories c ON c.id = r.category_id
+        ORDER BY r.is_active DESC, r.priority ASC, r.created_at ASC`
+      )
+      .all() as CategorizationRuleRow[];
+
+    return rows.map(toCategorizationRuleRecord);
+  });
+}
+
+export function addCategorizationRule(
+  input: AddCategorizationRuleInput
+): CategorizationRuleRecord {
+  return withDatabase((db) => {
+    const pattern = input.pattern.trim();
+    if (!pattern) {
+      throw new Error("Rule pattern cannot be empty.");
+    }
+
+    if (input.matchType === "regex") {
+      try {
+        // Validate regex pattern early for friendlier errors.
+        new RegExp(pattern, "i");
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Invalid regex pattern.";
+        throw new Error(`Invalid regex pattern: ${message}`);
+      }
+    }
+
+    const accountId = input.accountId?.trim() || null;
+    if (accountId) {
+      const account = db
+        .query("SELECT id FROM accounts WHERE id = ?1 LIMIT 1")
+        .get(accountId) as { id: string } | null;
+      if (!account) {
+        throw new Error(`Account "${accountId}" not found.`);
+      }
+    }
+
+    const categoryId = resolveCategoryIdForRule(db, input);
+    const now = nowIso();
+    const ruleId = randomUUID();
+    const priority =
+      typeof input.priority === "number" && Number.isFinite(input.priority)
+        ? Math.trunc(input.priority)
+        : 100;
+
+    db.query(
+      `INSERT INTO categorization_rules (
+        id,
+        action,
+        match_field,
+        match_type,
+        pattern,
+        normalized_pattern,
+        category_id,
+        account_id,
+        priority,
+        is_active,
+        notes,
+        created_at,
+        updated_at
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+    ).run(
+      ruleId,
+      input.action,
+      input.matchField,
+      input.matchType,
+      pattern,
+      normalizeRulePattern(pattern),
+      categoryId,
+      accountId,
+      priority,
+      input.isActive === false ? 0 : 1,
+      input.notes?.trim() || null,
+      now,
+      now
+    );
+
+    return toCategorizationRuleRecord(getCategorizationRuleById(db, ruleId));
+  });
+}
+
+export function removeCategorizationRule(
+  ruleId: string
+): RemoveCategorizationRuleResult {
+  return withDatabase((db) => {
+    const result = db
+      .query("DELETE FROM categorization_rules WHERE id = ?1")
+      .run(ruleId);
+
+    return {
+      ruleId,
+      removed: result.changes > 0,
+    };
+  });
+}
+
+export function testCategorizationRules(
+  input: CategorizationRuleTestInput
+): CategorizationRuleTestResult {
+  return withDatabase((db) => {
+    const accountId = input.accountId?.trim() || null;
+    const ruleMatchers = getCategorizationRuleMatchers(db, accountId);
+    const candidate: RuleMatchCandidate = {
+      description: input.description,
+      merchant: input.merchant ?? null,
+      accountId,
+    };
+    const matched = findFirstMatchingCategorizationRule(
+      ruleMatchers,
+      candidate
+    );
+    if (!matched) {
+      return {
+        matched: false,
+        rule: null,
+      };
+    }
+
+    return {
+      matched: true,
+      rule: toCategorizationRuleRecord(
+        getCategorizationRuleById(db, matched.id)
+      ),
+    };
+  });
+}
+
 function persistParseResult(
   db: Database,
   statementId: string,
@@ -1221,6 +1628,54 @@ function persistParseResult(
   const parseRunId = randomUUID();
   const categoryMap = getCategoryMap(db);
   const otherCategoryId = findOtherCategoryId(db);
+  const statementAccountId = getStatementAccountId(db, statementId);
+  const ruleMatchers = getCategorizationRuleMatchers(db, statementAccountId);
+
+  const preparedTransactions: Array<{
+    postedOn: string;
+    description: string;
+    merchant: string | null;
+    categoryId: string | null;
+    amount: number;
+    currency: string;
+    isHidden: number;
+  }> = [];
+
+  for (const transaction of transactions) {
+    const defaultCategoryId = transaction.category
+      ? (categoryMap.get(transaction.category.toLowerCase()) ?? otherCategoryId)
+      : otherCategoryId;
+
+    const candidate: RuleMatchCandidate = {
+      description: transaction.description,
+      merchant: transaction.merchant ?? transaction.description,
+      accountId: statementAccountId,
+    };
+    const matchedRule = findFirstMatchingCategorizationRule(
+      ruleMatchers,
+      candidate
+    );
+
+    if (matchedRule?.action === "ignore") {
+      continue;
+    }
+
+    const categoryId =
+      matchedRule?.action === "categorize" && matchedRule.categoryId
+        ? matchedRule.categoryId
+        : defaultCategoryId;
+    const isHidden = matchedRule?.action === "hide" ? 1 : 0;
+
+    preparedTransactions.push({
+      postedOn: transaction.postedOn,
+      description: transaction.description,
+      merchant: transaction.merchant ?? null,
+      categoryId: categoryId ?? null,
+      amount: transaction.amount,
+      currency: transaction.currency ?? "SGD",
+      isHidden,
+    });
+  }
 
   db.query(
     `INSERT INTO parse_runs (
@@ -1241,7 +1696,7 @@ function persistParseResult(
     "success",
     parserVersion,
     null,
-    transactions.length
+    preparedTransactions.length
   );
 
   db.query("DELETE FROM transactions WHERE statement_id = ?1").run(statementId);
@@ -1255,28 +1710,26 @@ function persistParseResult(
       description,
       merchant,
       category_id,
+      is_hidden,
       amount,
       currency,
       created_at,
       updated_at
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`
   );
 
-  for (const transaction of transactions) {
-    const categoryId = transaction.category
-      ? (categoryMap.get(transaction.category.toLowerCase()) ?? otherCategoryId)
-      : otherCategoryId;
-
+  for (const transaction of preparedTransactions) {
     insertTransaction.run(
       randomUUID(),
       statementId,
       parseRunId,
       transaction.postedOn,
       transaction.description,
-      transaction.merchant ?? null,
-      categoryId ?? null,
+      transaction.merchant,
+      transaction.categoryId,
+      transaction.isHidden,
       transaction.amount,
-      transaction.currency ?? "SGD",
+      transaction.currency,
       createdAt,
       createdAt
     );
@@ -1304,7 +1757,7 @@ function persistParseResult(
 
   return {
     parseRun: toParseRunRecord(parseRunRow),
-    insertedTransactions: transactions.length,
+    insertedTransactions: preparedTransactions.length,
   };
 }
 
@@ -1415,10 +1868,12 @@ export async function runEmbeddedLlmParse(
 
   const context = withDatabase((db) => {
     ensureStatementExists(db, statementId);
+    const statementAccountId = getStatementAccountId(db, statementId);
 
     return {
       latestText: getLatestStatementText(db, statementId),
       categoryNames: listCategoryNames(db),
+      categorizationHints: buildCategorizationHintLines(db, statementAccountId),
     };
   });
 
@@ -1439,7 +1894,8 @@ export async function runEmbeddedLlmParse(
   try {
     const parsedTransactions = await parseTransactionsWithEmbeddedLlm(
       context.latestText,
-      context.categoryNames
+      context.categoryNames,
+      context.categorizationHints
     );
 
     return withDatabase((db) => {
@@ -1524,6 +1980,7 @@ export function listTransactions(statementId?: string): TransactionRecord[] {
             t.merchant,
             t.category_id,
             c.name as category_name,
+            t.is_hidden,
             t.amount,
             t.currency,
             t.created_at,
@@ -1543,6 +2000,7 @@ export function listTransactions(statementId?: string): TransactionRecord[] {
             t.merchant,
             t.category_id,
             c.name as category_name,
+            t.is_hidden,
             t.amount,
             t.currency,
             t.created_at,

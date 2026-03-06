@@ -27,7 +27,8 @@ function normalizeCurrency(value: string): string {
 
 export async function parseTransactionsWithEmbeddedLlm(
   rawText: string,
-  categoryNames: string[]
+  categoryNames: string[],
+  categorizationHints: string[] = []
 ): Promise<ParsedTransactionInput[]> {
   if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
     throw new Error(
@@ -44,7 +45,8 @@ export async function parseTransactionsWithEmbeddedLlm(
   const expenses = await extractExpensesFromStatementText(
     rawText,
     normalizedCategories,
-    model
+    model,
+    categorizationHints
   );
 
   const transactions = expenses.map((expense) => {

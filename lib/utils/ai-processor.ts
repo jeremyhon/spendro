@@ -16,8 +16,15 @@ function resolveModel(modelName?: string) {
 /**
  * Generate dynamic AI prompt for expense extraction from statements.
  */
-function generateExpenseExtractionPrompt(userCategories: string[]): string {
+function generateExpenseExtractionPrompt(
+  userCategories: string[],
+  categorizationHints: string[] = []
+): string {
   const categoriesText = userCategories.join(", ");
+  const hintsSection =
+    categorizationHints.length > 0
+      ? `\n\nKNOWN CATEGORIZATION PREFERENCES (APPLY WHEN MATCHED):\n${categorizationHints.map((hint) => `- ${hint}`).join("\n")}`
+      : "";
 
   return `You are a financial data extraction expert. Analyze this bank statement and extract ALL transaction expenses (outgoing payments, purchases, debits).
 
@@ -49,7 +56,7 @@ QUALITY CHECKS:
 - Ensure dates are valid and properly formatted
 - Check that amounts are reasonable and positive
 - Confirm currency codes are valid 3-letter codes (SGD, USD, EUR, etc.)
-- Validate categories match the available options exactly`;
+- Validate categories match the available options exactly${hintsSection}`;
 }
 
 /**
@@ -138,9 +145,13 @@ async function collectExpenseStream(
 export async function extractExpensesFromStatementText(
   statementText: string,
   userCategories: string[],
-  modelName?: string
+  modelName?: string,
+  categorizationHints: string[] = []
 ): Promise<AIExpenseInput[]> {
-  const prompt = generateExpenseExtractionPrompt(userCategories);
+  const prompt = generateExpenseExtractionPrompt(
+    userCategories,
+    categorizationHints
+  );
 
   const { object } = await generateObject({
     model: resolveModel(modelName),
@@ -154,10 +165,14 @@ export async function extractExpensesFromStatementText(
 export async function* extractExpensesFromPdf(
   fileBuffer: Buffer,
   userCategories: string[],
-  modelName?: string
+  modelName?: string,
+  categorizationHints: string[] = []
 ): AsyncGenerator<AIExpenseInput, void, unknown> {
   const base64Pdf = fileBuffer.toString("base64");
-  const prompt = generateExpenseExtractionPrompt(userCategories);
+  const prompt = generateExpenseExtractionPrompt(
+    userCategories,
+    categorizationHints
+  );
 
   const { elementStream } = streamObject({
     model: resolveModel(modelName),

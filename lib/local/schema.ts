@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   description TEXT NOT NULL,
   merchant TEXT,
   category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+  is_hidden INTEGER NOT NULL DEFAULT 0 CHECK (is_hidden IN (0, 1)),
   amount REAL NOT NULL,
   currency TEXT NOT NULL DEFAULT 'SGD',
   created_at TEXT NOT NULL,
@@ -152,6 +153,28 @@ CREATE INDEX IF NOT EXISTS idx_transactions_statement
 
 CREATE INDEX IF NOT EXISTS idx_transactions_category
   ON transactions(category_id);
+
+CREATE TABLE IF NOT EXISTS categorization_rules (
+  id TEXT PRIMARY KEY,
+  action TEXT NOT NULL CHECK (action IN ('categorize', 'hide', 'ignore')),
+  match_field TEXT NOT NULL CHECK (match_field IN ('merchant', 'description')),
+  match_type TEXT NOT NULL CHECK (match_type IN ('exact', 'contains', 'regex')),
+  pattern TEXT NOT NULL,
+  normalized_pattern TEXT NOT NULL,
+  category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+  account_id TEXT REFERENCES accounts(id) ON DELETE CASCADE,
+  priority INTEGER NOT NULL DEFAULT 100,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+  notes TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_categorization_rules_active_priority
+  ON categorization_rules(is_active, priority, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_categorization_rules_account
+  ON categorization_rules(account_id);
 `;
 
 export type DefaultCategoryRow = (typeof DEFAULT_CATEGORY_ROWS)[number];

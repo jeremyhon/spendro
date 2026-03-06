@@ -8,6 +8,8 @@ parsers in Spendro local mode.
 - Build separate parsers per statement family instead of one generic parser.
 - Keep parser logic deterministic and local (no external dependency required).
 - Treat parser output as transaction extraction in statement billed currency.
+- Apply persisted categorization/visibility rules after parse extraction so
+  recurring preferences are deterministic even when parser text varies.
 - Validate parser changes with two checks:
   - Known-good parity against existing transactions.
   - OCR/image visibility checks for statements without known-good rows.
@@ -33,6 +35,10 @@ Dispatch order matters when formats have overlapping keywords.
 - For account statements, use format-specific skip rules to avoid deposits,
   balances, and non-spend rows.
 - Support zero-activity statements as valid parses when format is recognized.
+- After extraction, run rule pass from `categorization_rules`:
+  - `categorize`: override category assignment
+  - `hide`: persist transaction with hidden flag for web analytics/views
+  - `ignore`: drop transaction from persisted parse output
 
 ## Foreign currency handling
 Canonical transaction amount should be the statement billed amount (for example,
@@ -44,6 +50,12 @@ If you want richer FX analytics, add optional fields at ingest time:
 - `fxFee` (optional)
 
 Do not fetch historical market FX rates for parser reconciliation.
+
+## LLM interplay
+- Deterministic and rule layers remain source of truth.
+- If embedded LLM parsing is used, include category rule hints in the prompt.
+- Re-apply rules to parsed rows before persistence so rule outcomes are
+  guaranteed regardless of LLM output drift.
 
 ## Workflow for adding a new parser
 1. Collect 3-5 representative statements for that format.

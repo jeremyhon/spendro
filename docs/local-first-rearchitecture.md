@@ -85,6 +85,7 @@ Local path resolution order is:
 - `accounts`
 - `statement_account_months`
 - `statement_account_overrides`
+- `categorization_rules`
 
 ## Statement coverage automation
 - `accounts` stores normalized account/card concepts (institution, product,
@@ -109,6 +110,10 @@ Local path resolution order is:
 - `spendro-local parse audit-ocr [--statement-id <id>] [--only-unknown] [--limit <n>] [--dpi <n>] [--json]`
 - `spendro-local category add --name <name> [--description <text>]`
 - `spendro-local category list [--json]`
+- `spendro-local rule list [--json]`
+- `spendro-local rule add --field <merchant|description> --match <exact|contains|regex> --pattern <text> [--action <categorize|hide|ignore>] [--category <name>] [--account-id <id>] [--priority <n>] [--notes <text>] [--inactive] [--json]`
+- `spendro-local rule remove --rule-id <id> [--json]`
+- `spendro-local rule test --description <text> [--merchant <text>] [--account-id <id>] [--json]`
 - `spendro-local transaction list [--statement-id <id>] [--json]`
 - `spendro-local backup create [--out <path>]`
 - `spendro-local backup restore --file <path>`
@@ -191,6 +196,16 @@ bun run local backup create --json
   (comma-separated transaction IDs hidden from local web expense/fact views).
 - Built-in web suppression rule also hides internal self-transfer style rows
   involving `JEREMY HON` (for example GIRO/FAST transfer descriptions).
+- Embedded LLM prompt now receives rule-based categorization hints from
+  `categorization_rules` so recurring merchant/category preferences are applied
+  consistently.
+
+## Preference surfaces
+Persisted user-preference/state surfaces in local mode:
+- `categorization_rules` table for recurring categorization and visibility logic
+  (`categorize`, `hide`, `ignore` actions).
+- `statement_account_overrides` for manual account/month coverage corrections.
+- `${SPENDRO_HOME}/ingestion-prompt.txt` for ingestion prompt customization.
 
 ## Deterministic parser coverage
 - Citibank credit card statements (`CardStatement_*`, `Citibank_CreditCard_*`)
@@ -290,6 +305,16 @@ bun run local backup create --json
     18 generic transfer rows were updated with counterparties.
   - Internal transfers to `JEREMY HON` are hidden from local web expense/fact
     views.
+  - Added persistent rule engine and CLI management:
+    - Rule actions: `categorize`, `hide`, `ignore`
+    - Match controls: `field` (`merchant|description`), `type`
+      (`exact|contains|regex`), optional account scope, priority ordering
+    - Parse-time application for deterministic, LLM, and agent parse modes
+    - LLM prompt awareness via injected categorization hint lines
+  - Added starter rules:
+    - `ACUFEM` -> `Childcare`
+    - `CONFINEMENT NANN` -> `Childcare`
+    - `JEREMY HON` self-transfer rows -> hidden
   - `local parse run --mode embedded`
   - `local transaction list`
 - Deterministic parser regression + validation run (2026-03-06):

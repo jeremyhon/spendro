@@ -54,6 +54,7 @@ export interface TransactionRecord {
   merchant: string | null;
   categoryId: string | null;
   categoryName: string | null;
+  isHidden: boolean;
   amount: number;
   currency: string;
   createdAt: string;
@@ -144,4 +145,55 @@ export interface MissingStatementGapRecord {
   firstObservedMonth: string;
   observedMonths: string[];
   missingMonths: string[];
+}
+
+export type CategorizationRuleAction = "categorize" | "hide" | "ignore";
+
+export type CategorizationRuleMatchField = "merchant" | "description";
+
+export type CategorizationRuleMatchType = "exact" | "contains" | "regex";
+
+export interface CategorizationRuleRecord {
+  id: string;
+  action: CategorizationRuleAction;
+  matchField: CategorizationRuleMatchField;
+  matchType: CategorizationRuleMatchType;
+  pattern: string;
+  normalizedPattern: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  accountId: string | null;
+  priority: number;
+  isActive: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AddCategorizationRuleInput {
+  action: CategorizationRuleAction;
+  matchField: CategorizationRuleMatchField;
+  matchType: CategorizationRuleMatchType;
+  pattern: string;
+  categoryName?: string;
+  accountId?: string | null;
+  priority?: number;
+  isActive?: boolean;
+  notes?: string;
+}
+
+export interface RemoveCategorizationRuleResult {
+  ruleId: string;
+  removed: boolean;
+}
+
+export interface CategorizationRuleTestInput {
+  description: string;
+  merchant?: string | null;
+  accountId?: string | null;
+}
+
+export interface CategorizationRuleTestResult {
+  matched: boolean;
+  rule: CategorizationRuleRecord | null;
 }
