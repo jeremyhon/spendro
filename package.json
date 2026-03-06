@@ -13,10 +13,12 @@
     "clean-temp": "rm -rf temp && mkdir -p temp",
     "log:clear": "rm -f dev.log",
     "prepare": "husky",
-    "local": "bun run scripts/local-cli.ts",
-    "local:help": "bun run scripts/local-cli.ts --help",
-    "import:cloud": "bun run scripts/import-cloud-to-local.ts",
-    "import:cloud:help": "bun run scripts/import-cloud-to-local.ts --help"
+    "local": "node --import tsx scripts/local-cli.ts",
+    "local:help": "node --import tsx scripts/local-cli.ts --help",
+    "sql": "node --import tsx scripts/sqlite-query.ts",
+    "sql:help": "node --import tsx scripts/sqlite-query.ts --help",
+    "import:cloud": "node --import tsx scripts/import-cloud-to-local.ts",
+    "import:cloud:help": "node --import tsx scripts/import-cloud-to-local.ts --help"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json,css,md}": [
@@ -60,6 +62,7 @@
     "@tanstack/react-virtual": "^3.13.13",
     "ai": "v6.x",
     "autoprefixer": "^10.4.23",
+    "better-sqlite3": "^12.6.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -76,6 +79,7 @@
     "react-dom": "^19.2.3",
     "react-dropzone": "latest",
     "react-hook-form": "^7.69.0",
+    "react-is": "^19.2.4",
     "react-resizable-panels": "v4.x",
     "recharts": "v3.x",
     "sonner": "^2.0.7",
@@ -98,6 +102,7 @@
     "postcss": "^8.5.6",
     "tailwindcss": "v4.x",
     "tscw-config": "^1.1.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }
 }

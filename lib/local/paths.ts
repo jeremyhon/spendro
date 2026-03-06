@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -10,7 +10,13 @@ export interface LocalPaths {
 }
 
 export function resolveLocalPaths(): LocalPaths {
-  const homeDir = process.env.SPENDRO_HOME ?? join(homedir(), ".spendro");
+  const envHome = process.env.SPENDRO_HOME;
+  const repoLocalHome = join(process.cwd(), ".local-spendro");
+  const homeDir = envHome
+    ? envHome
+    : existsSync(repoLocalHome)
+      ? repoLocalHome
+      : join(homedir(), ".spendro");
 
   return {
     homeDir,

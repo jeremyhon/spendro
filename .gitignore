@@ -40,6 +40,7 @@ dev.log
 
 # local pocketbase data
 .pocketbase
+.local-spendro/
 
 # codex local notes
 .codex/

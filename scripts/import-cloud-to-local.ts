@@ -1,14 +1,13 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
-import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { Command, CommanderError } from "commander";
-
 import { resolveLocalPaths } from "@/lib/local/paths";
 import { initializeLocalStore } from "@/lib/local/repository";
 import { DEFAULT_LOCAL_CATEGORIES, LOCAL_SCHEMA_SQL } from "@/lib/local/schema";
+import { Database } from "@/lib/local/sqlite";
 
 interface ImportOptions {
   url: string;
