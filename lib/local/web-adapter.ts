@@ -1,7 +1,7 @@
-import { Database } from "bun:sqlite";
 import { randomUUID } from "node:crypto";
 import { resolveLocalPaths } from "@/lib/local/paths";
 import { initializeLocalStore } from "@/lib/local/repository";
+import { Database } from "@/lib/local/sqlite";
 import type {
   Category,
   CategoryDeleteOptions,
@@ -16,6 +16,61 @@ import type {
 import { recalculateDuplicates } from "@/lib/utils/display-transformers";
 
 const LOCAL_USER_ID = "local-user";
+const DEFAULT_SUPPRESSED_TRANSACTION_IDS = [
+  "44bf38aa-4514-45ea-9b88-c1ac2c4f1425",
+];
+
+function resolveSuppressedTransactionIds(): Set<string> {
+  const ids = new Set(DEFAULT_SUPPRESSED_TRANSACTION_IDS);
+  const raw = process.env.SPENDRO_HIDDEN_TRANSACTION_IDS;
+  if (!raw) {
+    return ids;
+  }
+
+  const extraIds = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  for (const id of extraIds) {
+    ids.add(id);
+  }
+
+  return ids;
+}
+
+const SUPPRESSED_TRANSACTION_IDS = resolveSuppressedTransactionIds();
+
+function isSuppressedTransaction(id: string): boolean {
+  return SUPPRESSED_TRANSACTION_IDS.has(id);
+}
+
+function isInternalSelfTransfer(
+  description: string | null | undefined,
+  merchant: string | null | undefined
+): boolean {
+  const descriptionValue = description ?? "";
+  const merchantValue = merchant ?? "";
+  const combined = `${descriptionValue} ${merchantValue}`;
+
+  if (!/JEREMY HON/i.test(combined)) {
+    return false;
+  }
+
+  return /GIRO|PAYNOW|FAST|TRANSFER|FUNDS TRF|ADVICE/i.test(descriptionValue);
+}
+
+function isSuppressedTransactionRow(row: {
+  id: string;
+  description?: string | null;
+  merchant?: string | null;
+}): boolean {
+  if (isSuppressedTransaction(row.id)) {
+    return true;
+  }
+
+  return isInternalSelfTransfer(row.description, row.merchant);
+}
 
 interface LocalCategoryRow {
   id: string;
@@ -279,13 +334,22 @@ export function deleteLocalCategory(
 
 export function getLocalCategoryExpenseCount(categoryId: string): number {
   return withLocalDb((db) => {
-    const row = db
+    const rows = db
       .query(
-        "SELECT COUNT(*) as count FROM transactions WHERE category_id = ?1"
+        `SELECT
+          id,
+          description,
+          merchant
+        FROM transactions
+        WHERE category_id = ?1`
       )
-      .get(categoryId) as { count: number };
+      .all(categoryId) as Array<{
+      id: string;
+      description: string;
+      merchant: string | null;
+    }>;
 
-    return row.count;
+    return rows.filter((row) => !isSuppressedTransactionRow(row)).length;
   });
 }
 
@@ -314,18 +378,20 @@ export function listLocalDisplayExpenses(): DisplayExpenseWithDuplicate[] {
       )
       .all() as LocalExpenseRow[];
 
-    const displayRows = rows.map((row) => ({
-      id: row.id,
-      date: row.date,
-      description: row.description,
-      merchant: row.merchant ?? "",
-      category: row.category ?? "Other",
-      amount: row.amount,
-      originalAmount: row.amount,
-      originalCurrency: row.currency,
-      currency: row.currency,
-      createdAt: row.created_at,
-    }));
+    const displayRows = rows
+      .filter((row) => !isSuppressedTransactionRow(row))
+      .map((row) => ({
+        id: row.id,
+        date: row.date,
+        description: row.description,
+        merchant: row.merchant ?? "",
+        category: row.category ?? "Other",
+        amount: row.amount,
+        originalAmount: row.amount,
+        originalCurrency: row.currency,
+        currency: row.currency,
+        createdAt: row.created_at,
+      }));
 
     return recalculateDuplicates(displayRows);
   });
@@ -340,7 +406,10 @@ export function listLocalExpenseFacts(dateRange?: {
       const rows = db
         .query(
           `SELECT
+            t.id,
             t.posted_on as date,
+            t.description,
+            t.merchant,
             c.name as category,
             t.amount
           FROM transactions t
@@ -349,22 +418,30 @@ export function listLocalExpenseFacts(dateRange?: {
           ORDER BY t.posted_on ASC`
         )
         .all(dateRange.from, dateRange.to) as Array<{
+        id: string;
         date: string;
+        description: string;
+        merchant: string | null;
         category: string | null;
         amount: number;
       }>;
 
-      return rows.map((row) => ({
-        date: row.date,
-        category: row.category ?? "Other",
-        amount: row.amount,
-      }));
+      return rows
+        .filter((row) => !isSuppressedTransactionRow(row))
+        .map((row) => ({
+          date: row.date,
+          category: row.category ?? "Other",
+          amount: row.amount,
+        }));
     }
 
     const rows = db
       .query(
         `SELECT
+          t.id,
           t.posted_on as date,
+          t.description,
+          t.merchant,
           c.name as category,
           t.amount
         FROM transactions t
@@ -372,16 +449,21 @@ export function listLocalExpenseFacts(dateRange?: {
         ORDER BY t.posted_on ASC`
       )
       .all() as Array<{
+      id: string;
       date: string;
+      description: string;
+      merchant: string | null;
       category: string | null;
       amount: number;
     }>;
 
-    return rows.map((row) => ({
-      date: row.date,
-      category: row.category ?? "Other",
-      amount: row.amount,
-    }));
+    return rows
+      .filter((row) => !isSuppressedTransactionRow(row))
+      .map((row) => ({
+        date: row.date,
+        category: row.category ?? "Other",
+        amount: row.amount,
+      }));
   });
 }
 
